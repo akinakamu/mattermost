@@ -413,7 +413,7 @@ function shouldSkipNotification(
 }
 
 export function notifyMe(title: string, body: string, channelId: string, teamId: string, silent: boolean, soundName: string, url: string): ActionFuncAsync<NotificationResult> {
-    return async (dispatch) => {
+    return async (dispatch, getState) => {
         // handle notifications in desktop app
         if (isDesktopApp()) {
             const result = await DesktopApp.dispatchNotification(title, body, channelId, teamId, silent, soundName, url);
@@ -421,11 +421,16 @@ export function notifyMe(title: string, body: string, channelId: string, teamId:
         }
 
         try {
+            const state = getState();
+            const config = getConfig(state);
+            const customIcon = config.TeamSettings?.CustomNotificationIconUrl;
+
             const result = await dispatch(showNotification({
                 title,
                 body,
                 requireInteraction: false,
                 silent,
+                icon: customIcon,
                 onClick: () => {
                     window.focus();
                     getHistory().push(url);

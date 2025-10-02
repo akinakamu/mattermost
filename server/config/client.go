@@ -331,6 +331,7 @@ func GenerateLimitedClientConfig(c *model.Config, telemetryID string, license *m
 	props["EnableCustomBrand"] = "false"
 	props["CustomBrandText"] = ""
 	props["CustomDescriptionText"] = ""
+	props["CustomNotificationIconUrl"] = ""
 	props["EnableLdap"] = "false"
 	props["LdapLoginFieldName"] = ""
 	props["LdapLoginButtonColor"] = ""
@@ -350,6 +351,7 @@ func GenerateLimitedClientConfig(c *model.Config, telemetryID string, license *m
 	props["EnableCustomBrand"] = strconv.FormatBool(*c.TeamSettings.EnableCustomBrand)
 	props["CustomBrandText"] = *c.TeamSettings.CustomBrandText
 	props["CustomDescriptionText"] = *c.TeamSettings.CustomDescriptionText
+	props["CustomNotificationIconUrl"] = *c.TeamSettings.CustomNotificationIconUrl
 	props["EnableMultifactorAuthentication"] = strconv.FormatBool(*c.ServiceSettings.EnableMultifactorAuthentication)
 	props["EnforceMultifactorAuthentication"] = "false"
 	props["EnableGuestAccounts"] = strconv.FormatBool(*c.GuestAccountsSettings.Enable)

@@ -27,6 +27,7 @@ export type ClientConfig = {
     CollapsedThreads: CollapsedThreads;
     CustomBrandText: string;
     CustomDescriptionText: string;
+    CustomNotificationIconUrl: string;
     CustomTermsOfServiceId: string;
     CustomTermsOfServiceReAcceptancePeriod: string;
     CustomUrlSchemes: string;
@@ -435,6 +436,7 @@ export type TeamSettings = {
     EnableCustomBrand: boolean;
     CustomBrandText: string;
     CustomDescriptionText: string;
+    CustomNotificationIconUrl: string;
     RestrictDirectMessage: string;
     UserStatusAwayTimeout: number;
     MaxChannelsPerTeam: number;

@@ -27,6 +27,7 @@ export interface ShowNotificationParams {
     body: string;
     requireInteraction: boolean;
     silent: boolean;
+    icon?: string;
     onClick?: (this: Notification, e: Event) => any | null;
 }
 
@@ -36,6 +37,7 @@ export function showNotification(
         body,
         requireInteraction,
         silent,
+        icon: customIcon,
         onClick,
     }: ShowNotificationParams = {
         title: '',
@@ -45,9 +47,12 @@ export function showNotification(
     },
 ): ThunkActionFunc<Promise<NotificationResult & {callback: () => void}>> {
     return async () => {
-        let icon = icon50;
-        if (UserAgent.isEdge()) {
-            icon = iconWS;
+        let icon = customIcon;
+        if (!icon) {
+            icon = icon50;
+            if (UserAgent.isEdge()) {
+                icon = iconWS;
+            }
         }
 
         if (!isNotificationAPISupported()) {

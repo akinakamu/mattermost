@@ -2321,6 +2321,7 @@ type TeamSettings struct {
 	EnableCustomBrand               *bool   `access:"site_customization"`
 	CustomBrandText                 *string `access:"site_customization"`
 	CustomDescriptionText           *string `access:"site_customization"`
+	CustomNotificationIconUrl       *string `access:"site_customization"`
 	RestrictDirectMessage           *string `access:"site_users_and_teams"`
 	EnableLastActiveTime            *bool   `access:"site_users_and_teams"`
 	// In seconds.
@@ -2384,6 +2385,10 @@ func (s *TeamSettings) SetDefaults() {
 
 	if s.CustomDescriptionText == nil {
 		s.CustomDescriptionText = NewPointer(TeamSettingsDefaultCustomDescriptionText)
+	}
+
+	if s.CustomNotificationIconUrl == nil {
+		s.CustomNotificationIconUrl = NewPointer("")
 	}
 
 	if s.RestrictDirectMessage == nil {
