@@ -239,14 +239,14 @@ export class MobileSidebarRightItems extends React.PureComponent<Props> {
                         text={formatMessage({id: 'navbar_dropdown.join', defaultMessage: 'Join Another Team'})}
                         icon={<i className='fa fa-plus-square'/>}
                     />
-                    {/* <Menu.ItemToggleModalRedux
+                    <Menu.ItemToggleModalRedux
                         id='leaveTeam'
                         show={!this.props.teamIsGroupConstrained && this.props.experimentalPrimaryTeam !== this.props.teamName}
                         modalId={ModalIdentifiers.LEAVE_TEAM}
                         dialogType={LeaveTeamModal}
                         text={formatMessage({id: 'navbar_dropdown.leave', defaultMessage: 'Leave Team'})}
                         icon={<LeaveTeamIcon/>}
-                    /> */}
+                    />
                 </Menu.Group>
                 <Menu.Group>
                     {pluginItems}
