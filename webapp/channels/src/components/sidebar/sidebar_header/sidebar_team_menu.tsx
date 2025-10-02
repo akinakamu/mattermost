@@ -102,9 +102,9 @@ export default function SidebarTeamMenu(props: Props) {
                     teamID={props.currentTeam.id}
                 />
             )}
-            {(!isTeamGroupConstrained && experimentalPrimaryTeam !== props.currentTeam.name) && (
+            {/* {(!isTeamGroupConstrained && experimentalPrimaryTeam !== props.currentTeam.name) && (
                 <LeaveTeamMenuItem/>
-            )}
+            )} */}
             {(canJoinAnotherTeam || havePermissionToCreateTeam) && <Menu.Separator/>}
             {canJoinAnotherTeam &&
                 <JoinAnotherTeamMenuItem/>
