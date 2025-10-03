@@ -40,6 +40,8 @@
 
 #sidebarTeamMenu {
     .learnAboutTeamsMenuItem {
+        display: none;
+
         .leading-element,.label-elements>span {
             color: var(--link-color);
         }
