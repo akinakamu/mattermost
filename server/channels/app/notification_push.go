@@ -5,11 +5,13 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -253,6 +255,58 @@ func (a *App) sendPushNotification(notification *PostNotification, user *model.U
 	case <-a.Srv().PushNotificationsHub.stopChan:
 		return
 	}
+}
+
+// replaceMentionsWithDisplayNames replaces @username mentions in the message with display names
+// based on the user's TeammateNameDisplay setting
+func (a *App) replaceMentionsWithDisplayNames(rctx request.CTX, message string, channelID string, nameFormat string) string {
+	// Regex pattern to match @mentions (same as frontend MENTIONS_REGEX)
+	// Matches @username or @username:domain
+	mentionRegex := `(?:\B|\b_+)@([a-z0-9.\-_]+(?::[a-z0-9.\-_]+)?)`
+	re := regexp.MustCompile(mentionRegex)
+	
+	// Get all users in the channel
+	channelUsers, err := a.Srv().Store().User().GetAllProfilesInChannel(context.Background(), channelID, true)
+	if err != nil {
+		rctx.Logger().Warn("Failed to get channel users for mention replacement", 
+			mlog.String("channel_id", channelID), 
+			mlog.Err(err))
+		return message
+	}
+	
+	// Create a map of username to user for quick lookup
+	usernameToUser := make(map[string]*model.User)
+	for _, user := range channelUsers {
+		usernameToUser[strings.ToLower(user.Username)] = user
+	}
+	
+	// Replace mentions with display names
+	result := re.ReplaceAllStringFunc(message, func(match string) string {
+		// Extract username from the match
+		submatches := re.FindStringSubmatch(match)
+		if len(submatches) < 2 {
+			return match
+		}
+		
+		username := strings.ToLower(submatches[1])
+		
+		// Skip special mentions
+		if username == "channel" || username == "all" || username == "here" {
+			return match
+		}
+		
+		// Look up the user
+		user, ok := usernameToUser[username]
+		if !ok {
+			return match
+		}
+		
+		// Get display name based on the name format
+		displayName := user.GetDisplayName(nameFormat)
+		return "@" + displayName
+	})
+	
+	return result
 }
 
 func (a *App) getPushNotificationMessage(contentsConfig, postMessage string, explicitMention, channelWideMention,
@@ -835,6 +889,10 @@ func (a *App) buildFullPushNotificationMessage(rctx request.CTX, contentsConfig 
 	}
 
 	postMessage := post.Message
+	// Replace @mentions with display names before stripping markdown
+	nameFormat := a.GetNotificationNameFormat(user)
+	postMessage = a.replaceMentionsWithDisplayNames(rctx, postMessage, channel.Id, nameFormat)
+	
 	stripped, err := utils.StripMarkdown(postMessage)
 	if err != nil {
 		rctx.Logger().Warn("Failed parse to markdown", mlog.String("post_id", post.Id), mlog.Err(err))
