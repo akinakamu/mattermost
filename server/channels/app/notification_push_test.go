@@ -1786,3 +1786,351 @@ func BenchmarkPushNotificationThroughput(b *testing.B) {
 	b.Logf("throughput: %f reqs/s", float64(len(testData)*cnt)/time.Since(then).Seconds())
 	time.Sleep(2 * time.Second)
 }
+
+func TestReplaceMentionsWithDisplayNames(t *testing.T) {
+	mainHelper.Parallel(t)
+	th := SetupWithStoreMock(t)
+	defer th.TearDown()
+
+	// Mock the required stores
+	mockStore := th.App.Srv().Store().(*mocks.Store)
+	mockUserStore := mocks.UserStore{}
+	mockUserStore.On("Count", mock.Anything).Return(int64(10), nil)
+	mockPostStore := mocks.PostStore{}
+	mockPostStore.On("GetMaxPostSize").Return(65535, nil)
+	mockSystemStore := mocks.SystemStore{}
+	mockSystemStore.On("GetByName", "UpgradedFromTE").Return(&model.System{Name: "UpgradedFromTE", Value: "false"}, nil)
+	mockSystemStore.On("GetByName", "InstallationDate").Return(&model.System{Name: "InstallationDate", Value: "10"}, nil)
+	mockSystemStore.On("GetByName", "FirstServerRunTimestamp").Return(&model.System{Name: "FirstServerRunTimestamp", Value: "10"}, nil)
+
+	mockStore.On("User").Return(&mockUserStore)
+	mockStore.On("Post").Return(&mockPostStore)
+	mockStore.On("System").Return(&mockSystemStore)
+	mockStore.On("GetDBSchemaVersion").Return(1, nil)
+
+	// Create test users with different display names
+	user1 := &model.User{
+		Id:        model.NewId(),
+		Username:  "testuser1",
+		FirstName: "John",
+		LastName:  "Doe",
+		Nickname:  "JD",
+	}
+
+	user2 := &model.User{
+		Id:        model.NewId(),
+		Username:  "testuser2",
+		FirstName: "Jane",
+		LastName:  "Smith",
+		Nickname:  "JS",
+	}
+
+	user3 := &model.User{
+		Id:        model.NewId(),
+		Username:  "testuser3",
+		FirstName: "Bob",
+		LastName:  "Johnson",
+		Nickname:  "", // No nickname
+	}
+
+	user4 := &model.User{
+		Id:       model.NewId(),
+		Username: "channel",
+		// This user has username "channel" but should still be treated as a user
+		FirstName: "Channel",
+		LastName:  "User",
+	}
+
+	channelId := model.NewId()
+
+	// Mock GetAllProfilesInChannel to return test users
+	channelUsers := map[string]*model.User{
+		user1.Id: user1,
+		user2.Id: user2,
+		user3.Id: user3,
+		user4.Id: user4,
+	}
+
+	mockUserStore.On("GetAllProfilesInChannel", mock.Anything, channelId, true).Return(channelUsers, nil)
+
+	for name, tc := range map[string]struct {
+		Message        string
+		NameFormat     string
+		ExpectedResult string
+		Description    string
+	}{
+		"username format - no change": {
+			Message:        "Hello @testuser1 and @testuser2",
+			NameFormat:     model.ShowUsername,
+			ExpectedResult: "Hello @testuser1 and @testuser2",
+			Description:    "When using username format, mentions should not be replaced",
+		},
+		"full_name format": {
+			Message:        "Hello @testuser1 and @testuser2",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "Hello @John Doe and @Jane Smith",
+			Description:    "When using full_name format, mentions should be replaced with full names",
+		},
+		"nickname_full_name format with nickname": {
+			Message:        "Hello @testuser1 and @testuser2",
+			NameFormat:     model.ShowNicknameFullName,
+			ExpectedResult: "Hello @JD and @JS",
+			Description:    "When using nickname_full_name format with nicknames, mentions should be replaced with nicknames",
+		},
+		"nickname_full_name format without nickname falls back to full name": {
+			Message:        "Hello @testuser3",
+			NameFormat:     model.ShowNicknameFullName,
+			ExpectedResult: "Hello @Bob Johnson",
+			Description:    "When using nickname_full_name format without nickname, should fall back to full name",
+		},
+		"special mentions @channel not replaced": {
+			Message:        "Hello @channel",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "Hello @channel",
+			Description:    "Special mention @channel should never be replaced",
+		},
+		"special mentions @all not replaced": {
+			Message:        "Hello @all",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "Hello @all",
+			Description:    "Special mention @all should never be replaced",
+		},
+		"special mentions @here not replaced": {
+			Message:        "Hello @here",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "Hello @here",
+			Description:    "Special mention @here should never be replaced",
+		},
+		"mixed mentions and special mentions": {
+			Message:        "@testuser1 mentioned @channel and @testuser2",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "@John Doe mentioned @channel and @Jane Smith",
+			Description:    "Mixed mentions: user mentions should be replaced but special mentions should not",
+		},
+		"unknown user not replaced": {
+			Message:        "Hello @unknownuser",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "Hello @unknownuser",
+			Description:    "Unknown users should not be replaced",
+		},
+		"escaped mention with backticks - single backtick": {
+			Message:        "Use `@channel` to mention everyone",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "Use `@channel` to mention everyone",
+			Description:    "Mentions within backticks should not be replaced (markdown inline code)",
+		},
+		"escaped mention with backticks - code block style": {
+			Message:        "Example: `@testuser1` or `@all`",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "Example: `@testuser1` or `@all`",
+			Description:    "Mentions within backticks should not be replaced",
+		},
+		"escaped special mention @channel with backtick": {
+			Message:        "Type `@channel` to notify",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "Type `@channel` to notify",
+			Description:    "Escaped @channel with backticks should not be replaced",
+		},
+		"escaped special mention @all with backtick": {
+			Message:        "Use `@all` command",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "Use `@all` command",
+			Description:    "Escaped @all with backticks should not be replaced",
+		},
+		"escaped special mention @here with backtick": {
+			Message:        "Try `@here` instead",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "Try `@here` instead",
+			Description:    "Escaped @here with backticks should not be replaced",
+		},
+		"mixed escaped and unescaped mentions": {
+			Message:        "@testuser1 said use `@channel` not @all",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "@John Doe said use `@channel` not @all",
+			Description:    "Should replace unescaped user mentions but not escaped or special mentions",
+		},
+		"multiple backtick sections": {
+			Message:        "Use `@testuser1` or contact @testuser2 directly, not `@all`",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "Use `@testuser1` or contact @Jane Smith directly, not `@all`",
+			Description:    "Should only replace mentions outside of backticks",
+		},
+		"mention at start of message": {
+			Message:        "@testuser1 hello",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "@John Doe hello",
+			Description:    "Mentions at the start of message should be replaced",
+		},
+		"mention at end of message": {
+			Message:        "hello @testuser1",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "hello @John Doe",
+			Description:    "Mentions at the end of message should be replaced",
+		},
+		"multiple same mentions": {
+			Message:        "@testuser1 and @testuser1 again",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "@John Doe and @John Doe again",
+			Description:    "Multiple mentions of the same user should all be replaced",
+		},
+		"mention with punctuation": {
+			Message:        "Hi @testuser1! How are you @testuser2?",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "Hi @John Doe! How are you @Jane Smith?",
+			Description:    "Mentions followed by punctuation should be replaced correctly",
+		},
+		"case insensitive username matching": {
+			Message:        "Hello @TestUser1 and @TESTUSER2",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "Hello @John Doe and @Jane Smith",
+			Description:    "Username matching should be case insensitive",
+		},
+		"empty message": {
+			Message:        "",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "",
+			Description:    "Empty messages should remain empty",
+		},
+		"message without mentions": {
+			Message:        "This is a regular message without any mentions",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "This is a regular message without any mentions",
+			Description:    "Messages without mentions should remain unchanged",
+		},
+		"mention-like text but not mention": {
+			Message:        "Email: user@example.com",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "Email: user@example.com",
+			Description:    "Email addresses should not be treated as mentions",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			result := th.App.replaceMentionsWithDisplayNames(th.Context, tc.Message, channelId, tc.NameFormat)
+			assert.Equal(t, tc.ExpectedResult, result, tc.Description)
+		})
+	}
+}
+
+func TestReplaceMentionsWithDisplayNamesWithMarkdownParsedText(t *testing.T) {
+	mainHelper.Parallel(t)
+	th := SetupWithStoreMock(t)
+	defer th.TearDown()
+
+	// Mock the required stores
+	mockStore := th.App.Srv().Store().(*mocks.Store)
+	mockUserStore := mocks.UserStore{}
+	mockUserStore.On("Count", mock.Anything).Return(int64(10), nil)
+	mockPostStore := mocks.PostStore{}
+	mockPostStore.On("GetMaxPostSize").Return(65535, nil)
+	mockSystemStore := mocks.SystemStore{}
+	mockSystemStore.On("GetByName", "UpgradedFromTE").Return(&model.System{Name: "UpgradedFromTE", Value: "false"}, nil)
+	mockSystemStore.On("GetByName", "InstallationDate").Return(&model.System{Name: "InstallationDate", Value: "10"}, nil)
+	mockSystemStore.On("GetByName", "FirstServerRunTimestamp").Return(&model.System{Name: "FirstServerRunTimestamp", Value: "10"}, nil)
+
+	mockStore.On("User").Return(&mockUserStore)
+	mockStore.On("Post").Return(&mockPostStore)
+	mockStore.On("System").Return(&mockSystemStore)
+	mockStore.On("GetDBSchemaVersion").Return(1, nil)
+
+	// Create test users
+	user1 := &model.User{
+		Id:        model.NewId(),
+		Username:  "alice",
+		FirstName: "Alice",
+		LastName:  "Wonder",
+		Nickname:  "Ali",
+	}
+
+	channelId := model.NewId()
+	channelUsers := map[string]*model.User{
+		user1.Id: user1,
+	}
+
+	mockUserStore.On("GetAllProfilesInChannel", mock.Anything, channelId, true).Return(channelUsers, nil)
+
+	// Test cases specifically for markdown-parsed text where mentions might be escaped
+	for name, tc := range map[string]struct {
+		Message        string
+		NameFormat     string
+		ExpectedResult string
+		Description    string
+	}{
+		"already markdown parsed - backticks preserved": {
+			Message:        "Use `@channel` for notifications",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "Use `@channel` for notifications",
+			Description:    "After markdown parsing, backtick-escaped mentions should not be converted",
+		},
+		"already markdown parsed - inline code with user mention": {
+			Message:        "Type `@alice` to mention",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "Type `@alice` to mention",
+			Description:    "Backtick-escaped user mentions should not be converted even with full_name format",
+		},
+		"already markdown parsed - inline code with @all": {
+			Message:        "Command: `@all` broadcasts",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "Command: `@all` broadcasts",
+			Description:    "Backtick-escaped @all should remain unchanged",
+		},
+		"already markdown parsed - inline code with @here": {
+			Message:        "Use `@here` for active users",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "Use `@here` for active users",
+			Description:    "Backtick-escaped @here should remain unchanged",
+		},
+		"markdown with mix of escaped and real mentions": {
+			Message:        "@alice, please check `@channel` usage",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "@Alice Wonder, please check `@channel` usage",
+			Description:    "Real mentions should be converted but backtick-escaped ones should not",
+		},
+		"multiple inline code blocks": {
+			Message:        "Try `@alice` or `@channel` but contact @alice directly",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "Try `@alice` or `@channel` but contact @Alice Wonder directly",
+			Description:    "Only mentions outside backticks should be converted",
+		},
+		"code block at start": {
+			Message:        "`@all` means everyone, @alice",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "`@all` means everyone, @Alice Wonder",
+			Description:    "Mentions in code at start should not convert, but regular mentions should",
+		},
+		"code block at end": {
+			Message:        "@alice use `@here`",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "@Alice Wonder use `@here`",
+			Description:    "Mentions in code at end should not convert, but regular mentions should",
+		},
+		"nested backticks scenario": {
+			Message:        "Example: `use @alice` and @alice will see",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "Example: `use @alice` and @Alice Wonder will see",
+			Description:    "First mention in backticks should not convert, second should",
+		},
+		"unescaped special mentions still preserved": {
+			Message:        "@alice mentioned @channel and @all",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "@Alice Wonder mentioned @channel and @all",
+			Description:    "User mentions convert, but special mentions (@channel, @all) never convert",
+		},
+		"all special mentions in code": {
+			Message:        "Syntax: `@channel`, `@all`, `@here`",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "Syntax: `@channel`, `@all`, `@here`",
+			Description:    "All special mentions in backticks should remain unchanged",
+		},
+		"real world example": {
+			Message:        "@alice to notify everyone use `@channel` not @here",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "@Alice Wonder to notify everyone use `@channel` not @here",
+			Description:    "Complex real-world case: user mention converts, backtick-escaped doesn't, @here stays as-is",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			result := th.App.replaceMentionsWithDisplayNames(th.Context, tc.Message, channelId, tc.NameFormat)
+			assert.Equal(t, tc.ExpectedResult, result, tc.Description)
+		})
+	}
+}

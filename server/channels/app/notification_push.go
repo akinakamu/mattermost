@@ -260,52 +260,79 @@ func (a *App) sendPushNotification(notification *PostNotification, user *model.U
 // replaceMentionsWithDisplayNames replaces @username mentions in the message with display names
 // based on the user's TeammateNameDisplay setting
 func (a *App) replaceMentionsWithDisplayNames(rctx request.CTX, message string, channelID string, nameFormat string) string {
-	// Regex pattern to match @mentions (same as frontend MENTIONS_REGEX)
-	// Matches @username or @username:domain
-	mentionRegex := `(?:\B|\b_+)@([a-z0-9.\-_]+(?::[a-z0-9.\-_]+)?)`
-	re := regexp.MustCompile(mentionRegex)
-	
 	// Get all users in the channel
 	channelUsers, err := a.Srv().Store().User().GetAllProfilesInChannel(context.Background(), channelID, true)
 	if err != nil {
-		rctx.Logger().Warn("Failed to get channel users for mention replacement", 
-			mlog.String("channel_id", channelID), 
+		rctx.Logger().Warn("Failed to get channel users for mention replacement",
+			mlog.String("channel_id", channelID),
 			mlog.Err(err))
 		return message
 	}
-	
+
 	// Create a map of username to user for quick lookup
 	usernameToUser := make(map[string]*model.User)
 	for _, user := range channelUsers {
 		usernameToUser[strings.ToLower(user.Username)] = user
 	}
-	
-	// Replace mentions with display names
-	result := re.ReplaceAllStringFunc(message, func(match string) string {
-		// Extract username from the match
-		submatches := re.FindStringSubmatch(match)
-		if len(submatches) < 2 {
-			return match
+
+	// Find all backtick code spans to exclude from mention replacement
+	// This regex matches content within single backticks: `code`
+	backtickRegex := regexp.MustCompile("`[^`]+`")
+	backtickRanges := backtickRegex.FindAllStringIndex(message, -1)
+
+	// Helper function to check if a position is within a backtick range
+	isInBackticks := func(start, end int) bool {
+		for _, r := range backtickRanges {
+			// Check if the mention overlaps with a backtick range
+			if start >= r[0] && end <= r[1] {
+				return true
+			}
 		}
-		
-		username := strings.ToLower(submatches[1])
-		
+		return false
+	}
+
+	// Regex pattern to match @mentions (same as frontend MENTIONS_REGEX)
+	// Matches @username or @username:domain
+	mentionRegex := regexp.MustCompile(`(?:\B|\b_+)@([a-z0-9.\-_]+(?::[a-z0-9.\-_]+)?)`)
+
+	// Replace mentions with display names, but skip those within backticks
+	result := message
+	matches := mentionRegex.FindAllStringSubmatchIndex(message, -1)
+
+	// Process matches in reverse order to maintain correct positions
+	for i := len(matches) - 1; i >= 0; i-- {
+		match := matches[i]
+		matchStart := match[0]
+		matchEnd := match[1]
+		usernameStart := match[2]
+		usernameEnd := match[3]
+
+		// Skip if this mention is within backticks
+		if isInBackticks(matchStart, matchEnd) {
+			continue
+		}
+
+		username := strings.ToLower(message[usernameStart:usernameEnd])
+
 		// Skip special mentions
 		if username == "channel" || username == "all" || username == "here" {
-			return match
+			continue
 		}
-		
+
 		// Look up the user
 		user, ok := usernameToUser[username]
 		if !ok {
-			return match
+			continue
 		}
-		
+
 		// Get display name based on the name format
 		displayName := user.GetDisplayName(nameFormat)
-		return "@" + displayName
-	})
-	
+		replacement := "@" + displayName
+
+		// Replace the mention
+		result = result[:matchStart] + replacement + result[matchEnd:]
+	}
+
 	return result
 }
 
@@ -892,7 +919,7 @@ func (a *App) buildFullPushNotificationMessage(rctx request.CTX, contentsConfig 
 	// Replace @mentions with display names before stripping markdown
 	nameFormat := a.GetNotificationNameFormat(user)
 	postMessage = a.replaceMentionsWithDisplayNames(rctx, postMessage, channel.Id, nameFormat)
-	
+
 	stripped, err := utils.StripMarkdown(postMessage)
 	if err != nil {
 		rctx.Logger().Warn("Failed parse to markdown", mlog.String("post_id", post.Id), mlog.Err(err))
