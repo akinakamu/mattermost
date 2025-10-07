@@ -842,7 +842,6 @@ func (a *App) buildFullPushNotificationMessage(rctx request.CTX, contentsConfig 
 		IsCRTEnabled: false,
 		IsIdLoaded:   false,
 	}
-	
 	userLocale := i18n.GetUserTranslations(user.Locale)
 	cfg := a.Config()
 	if contentsConfig != model.GenericNoChannelNotification || channel.Type == model.ChannelTypeDirect {
@@ -907,6 +906,5 @@ func (a *App) buildFullPushNotificationMessage(rctx request.CTX, contentsConfig 
 		replyToThreadType,
 		userLocale,
 	)
-	
 	return msg
 }

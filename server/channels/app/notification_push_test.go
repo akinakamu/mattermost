@@ -1144,6 +1144,7 @@ func TestShouldSendPushNotifications(t *testing.T) {
 
 // testPushNotificationHandler is an HTTP handler to record push notifications
 // being sent from the client.
+// It records the number of requests sent to it, and stores all the requests
 // to be verified later.
 type testPushNotificationHandler struct {
 	t                 testing.TB
@@ -1155,6 +1156,7 @@ type testPushNotificationHandler struct {
 	_notificationAcks []*model.PushNotificationAck
 }
 
+// handleReq parses a push notification from the body, and stores it.
 // It also sends an appropriate response depending on the behavior set.
 // If the behavior is simple, it always sends an OK response. Otherwise,
 // it alternates between an OK and a REMOVE response.
