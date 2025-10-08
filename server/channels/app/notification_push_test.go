@@ -2166,7 +2166,31 @@ func TestBuildFullPushNotificationMessageWithMentions(t *testing.T) {
 		Locale:   "en",
 	}
 
-	user1 := &model.User{
+	testuser1 := &model.User{
+		Id:        model.NewId(),
+		Username:  "testuser1",
+		FirstName: "John",
+		LastName:  "Doe",
+		Nickname:  "JD",
+	}
+
+	testuser2 := &model.User{
+		Id:        model.NewId(),
+		Username:  "testuser2",
+		FirstName: "Jane",
+		LastName:  "Smith",
+		Nickname:  "JS",
+	}
+
+	testuser3 := &model.User{
+		Id:        model.NewId(),
+		Username:  "testuser3",
+		FirstName: "Bob",
+		LastName:  "Johnson",
+		Nickname:  "",
+	}
+
+	alice := &model.User{
 		Id:        model.NewId(),
 		Username:  "alice",
 		FirstName: "Alice",
@@ -2174,7 +2198,7 @@ func TestBuildFullPushNotificationMessageWithMentions(t *testing.T) {
 		Nickname:  "Ali",
 	}
 
-	user2 := &model.User{
+	bob := &model.User{
 		Id:        model.NewId(),
 		Username:  "bob",
 		FirstName: "Bob",
@@ -2189,64 +2213,293 @@ func TestBuildFullPushNotificationMessageWithMentions(t *testing.T) {
 	}
 
 	channelUsers := map[string]*model.User{
-		user1.Id: user1,
-		user2.Id: user2,
+		testuser1.Id: testuser1,
+		testuser2.Id: testuser2,
+		testuser3.Id: testuser3,
+		alice.Id:     alice,
+		bob.Id:       bob,
 	}
 
 	mockUserStore.On("GetAllProfilesInChannel", mock.Anything, channel.Id, true).Return(channelUsers, nil)
-	mockPreferenceStore.On("Get", recipientUser.Id, model.PreferenceCategoryDisplaySettings, model.PreferenceNameNameFormat).Return(&model.Preference{Value: model.ShowFullName}, nil)
 	mockUserStore.On("GetUnreadCount", recipientUser.Id, mock.Anything).Return(int64(5), nil)
 
 	for name, tc := range map[string]struct {
 		PostMessage    string
-		ExpectedInBody string
+		NameFormat     string
+		ExpectedResult string
 		Description    string
 	}{
-		"simple user mention replacement": {
+		"username format - no change": {
+			PostMessage:    "Hello @testuser1 and @testuser2",
+			NameFormat:     model.ShowUsername,
+			ExpectedResult: "@Alice Wonder: Hello @testuser1 and @testuser2",
+			Description:    "When using username format, mentions should not be replaced",
+		},
+		"full_name format": {
+			PostMessage:    "Hello @testuser1 and @testuser2",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "@Alice Wonder: Hello @John Doe and @Jane Smith",
+			Description:    "When using full_name format, mentions should be replaced with full names",
+		},
+		"nickname_full_name format with nickname": {
+			PostMessage:    "Hello @testuser1 and @testuser2",
+			NameFormat:     model.ShowNicknameFullName,
+			ExpectedResult: "@Alice Wonder: Hello @JD and @JS",
+			Description:    "When using nickname_full_name format with nicknames, mentions should be replaced with nicknames",
+		},
+		"nickname_full_name format without nickname falls back to full name": {
+			PostMessage:    "Hello @testuser3",
+			NameFormat:     model.ShowNicknameFullName,
+			ExpectedResult: "@Alice Wonder: Hello @Bob Johnson",
+			Description:    "When using nickname_full_name format without nickname, should fall back to full name",
+		},
+		"special mentions @channel not replaced": {
+			PostMessage:    "Hello @channel",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "@Alice Wonder: Hello @channel",
+			Description:    "Special mention @channel should never be replaced",
+		},
+		"special mentions @all not replaced": {
+			PostMessage:    "Hello @all",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "@Alice Wonder: Hello @all",
+			Description:    "Special mention @all should never be replaced",
+		},
+		"special mentions @here not replaced": {
+			PostMessage:    "Hello @here",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "@Alice Wonder: Hello @here",
+			Description:    "Special mention @here should never be replaced",
+		},
+		"mixed mentions and special mentions": {
+			PostMessage:    "@testuser1 mentioned @channel and @testuser2",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "@Alice Wonder: @John Doe mentioned @channel and @Jane Smith",
+			Description:    "Mixed mentions: user mentions should be replaced but special mentions should not",
+		},
+		"unknown user not replaced": {
+			PostMessage:    "Hello @unknownuser",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "@Alice Wonder: Hello @unknownuser",
+			Description:    "Unknown users should not be replaced",
+		},
+		"escaped mention with backticks - single backtick": {
+			PostMessage:    "Use `@channel` to mention everyone",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "@Alice Wonder: Use `@channel` to mention everyone",
+			Description:    "Mentions within backticks should not be replaced (markdown inline code)",
+		},
+		"escaped mention with backticks - code block style": {
+			PostMessage:    "Example: `@testuser1` or `@all`",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "@Alice Wonder: Example: `@testuser1` or `@all`",
+			Description:    "Mentions within backticks should not be replaced",
+		},
+		"escaped special mention @channel with backtick": {
+			PostMessage:    "Type `@channel` to notify",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "@Alice Wonder: Type `@channel` to notify",
+			Description:    "Escaped @channel with backticks should not be replaced",
+		},
+		"escaped special mention @all with backtick": {
+			PostMessage:    "Use `@all` command",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "@Alice Wonder: Use `@all` command",
+			Description:    "Escaped @all with backticks should not be replaced",
+		},
+		"escaped special mention @here with backtick": {
+			PostMessage:    "Try `@here` instead",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "@Alice Wonder: Try `@here` instead",
+			Description:    "Escaped @here with backticks should not be replaced",
+		},
+		"mixed escaped and unescaped mentions": {
+			PostMessage:    "@testuser1 said use `@channel` not @all",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "@Alice Wonder: @John Doe said use `@channel` not @all",
+			Description:    "Should replace unescaped user mentions but not escaped or special mentions",
+		},
+		"multiple backtick sections": {
+			PostMessage:    "Use `@testuser1` or contact @testuser2 directly, not `@all`",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "@Alice Wonder: Use `@testuser1` or contact @Jane Smith directly, not `@all`",
+			Description:    "Should only replace mentions outside of backticks",
+		},
+		"mention at start of message": {
+			PostMessage:    "@testuser1 hello",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "@Alice Wonder: @John Doe hello",
+			Description:    "Mentions at the start of message should be replaced",
+		},
+		"mention at end of message": {
+			PostMessage:    "hello @testuser1",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "@Alice Wonder: hello @John Doe",
+			Description:    "Mentions at the end of message should be replaced",
+		},
+		"multiple same mentions": {
+			PostMessage:    "@testuser1 and @testuser1 again",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "@Alice Wonder: @John Doe and @John Doe again",
+			Description:    "Multiple mentions of the same user should all be replaced",
+		},
+		"mention with punctuation": {
+			PostMessage:    "Hi @testuser1! How are you @testuser2?",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "@Alice Wonder: Hi @John Doe! How are you @Jane Smith?",
+			Description:    "Mentions followed by punctuation should be replaced correctly",
+		},
+		"case insensitive username matching": {
+			PostMessage:    "Hello @TestUser1 and @TESTUSER2",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "@Alice Wonder: Hello @John Doe and @Jane Smith",
+			Description:    "Username matching should be case insensitive",
+		},
+		"empty message": {
+			PostMessage:    "",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "@Alice Wonder: ",
+			Description:    "Empty messages should remain empty",
+		},
+		"message without mentions": {
+			PostMessage:    "This is a regular message without any mentions",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "@Alice Wonder: This is a regular message without any mentions",
+			Description:    "Messages without mentions should remain unchanged",
+		},
+		"mention-like text but not mention": {
+			PostMessage:    "Email: user@example.com",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "@Alice Wonder: Email: user@example.com",
+			Description:    "Email addresses should not be treated as mentions",
+		},
+		"simple user mention with alice": {
 			PostMessage:    "Hello @alice, how are you?",
-			ExpectedInBody: "Alice Wonder",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "@Alice Wonder: Hello @Alice Wonder, how are you?",
 			Description:    "User mentions should be replaced with display names in the notification body",
 		},
-		"multiple user mentions": {
+		"multiple user mentions with alice and bob": {
 			PostMessage:    "@alice and @bob are working together",
-			ExpectedInBody: "Alice Wonder",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "@Alice Wonder: @Alice Wonder and @Bob Smith are working together",
 			Description:    "Multiple mentions should be replaced",
 		},
-		"backtick escaped mention preserved": {
+		"backtick escaped mention with alice preserved": {
 			PostMessage:    "Use `@alice` to mention Alice",
-			ExpectedInBody: "`@alice`",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "@Alice Wonder: Use `@alice` to mention Alice",
 			Description:    "Mentions in backticks should not be replaced",
 		},
-		"special mention @channel preserved": {
+		"special mention @channel with alice": {
 			PostMessage:    "@alice please check @channel",
-			ExpectedInBody: "@channel",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "@Alice Wonder: @Alice Wonder please check @channel",
 			Description:    "Special @channel mention should not be replaced",
 		},
-		"special mention @all preserved": {
+		"special mention @all with alice": {
 			PostMessage:    "@alice notify @all",
-			ExpectedInBody: "@all",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "@Alice Wonder: @Alice Wonder notify @all",
 			Description:    "Special @all mention should not be replaced",
 		},
-		"special mention @here preserved": {
+		"special mention @here with alice": {
 			PostMessage:    "@alice use @here",
-			ExpectedInBody: "@here",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "@Alice Wonder: @Alice Wonder use @here",
 			Description:    "Special @here mention should not be replaced",
 		},
-		"mixed backtick and real mentions": {
+		"mixed backtick and real mentions with alice and bob": {
 			PostMessage:    "@alice said to use `@bob` syntax",
-			ExpectedInBody: "Alice Wonder",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "@Alice Wonder: @Alice Wonder said to use `@bob` syntax",
 			Description:    "Real mentions replaced but backtick mentions preserved",
 		},
-		"backticked special mention": {
+		"backticked special mention with alice": {
 			PostMessage:    "Type `@channel` to notify everyone, @alice",
-			ExpectedInBody: "`@channel`",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "@Alice Wonder: Type `@channel` to notify everyone, @Alice Wonder",
 			Description:    "Backticked special mentions should stay as-is",
+		},
+		"already markdown parsed - backticks preserved": {
+			PostMessage:    "Use `@channel` for notifications",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "@Alice Wonder: Use `@channel` for notifications",
+			Description:    "After markdown parsing, backtick-escaped mentions should not be converted",
+		},
+		"already markdown parsed - inline code with user mention": {
+			PostMessage:    "Type `@alice` to mention",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "@Alice Wonder: Type `@alice` to mention",
+			Description:    "Backtick-escaped user mentions should not be converted even with full_name format",
+		},
+		"already markdown parsed - inline code with @all": {
+			PostMessage:    "Command: `@all` broadcasts",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "@Alice Wonder: Command: `@all` broadcasts",
+			Description:    "Backtick-escaped @all should remain unchanged",
+		},
+		"already markdown parsed - inline code with @here": {
+			PostMessage:    "Use `@here` for active users",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "@Alice Wonder: Use `@here` for active users",
+			Description:    "Backtick-escaped @here should remain unchanged",
+		},
+		"markdown with mix of escaped and real mentions": {
+			PostMessage:    "@alice, please check `@channel` usage",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "@Alice Wonder: @Alice Wonder, please check `@channel` usage",
+			Description:    "Real mentions should be converted but backtick-escaped ones should not",
+		},
+		"multiple inline code blocks": {
+			PostMessage:    "Try `@alice` or `@channel` but contact @alice directly",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "@Alice Wonder: Try `@alice` or `@channel` but contact @Alice Wonder directly",
+			Description:    "Only mentions outside backticks should be converted",
+		},
+		"code block at start": {
+			PostMessage:    "`@all` means everyone, @alice",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "@Alice Wonder: `@all` means everyone, @Alice Wonder",
+			Description:    "Mentions in code at start should not convert, but regular mentions should",
+		},
+		"code block at end": {
+			PostMessage:    "@alice use `@here`",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "@Alice Wonder: @Alice Wonder use `@here`",
+			Description:    "Mentions in code at end should not convert, but regular mentions should",
+		},
+		"nested backticks scenario": {
+			PostMessage:    "Example: `use @alice` and @alice will see",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "@Alice Wonder: Example: `use @alice` and @Alice Wonder will see",
+			Description:    "First mention in backticks should not convert, second should",
+		},
+		"unescaped special mentions still preserved with alice": {
+			PostMessage:    "@alice mentioned @channel and @all",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "@Alice Wonder: @Alice Wonder mentioned @channel and @all",
+			Description:    "User mentions convert, but special mentions (@channel, @all) never convert",
+		},
+		"all special mentions in code": {
+			PostMessage:    "Syntax: `@channel`, `@all`, `@here`",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "@Alice Wonder: Syntax: `@channel`, `@all`, `@here`",
+			Description:    "All special mentions in backticks should remain unchanged",
+		},
+		"real world example": {
+			PostMessage:    "@alice to notify everyone use `@channel` not @here",
+			NameFormat:     model.ShowFullName,
+			ExpectedResult: "@Alice Wonder: @Alice Wonder to notify everyone use `@channel` not @here",
+			Description:    "Complex real-world case: user mention converts, backtick-escaped doesn't, @here stays as-is",
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
+			mockPreferenceStore.On("Get", recipientUser.Id, model.PreferenceCategoryDisplaySettings, model.PreferenceNameNameFormat).Return(&model.Preference{Value: tc.NameFormat}, nil).Once()
+
 			post := &model.Post{
 				Id:        model.NewId(),
-				UserId:    user1.Id,
+				UserId:    alice.Id,
 				ChannelId: channel.Id,
 				Message:   tc.PostMessage,
 			}
@@ -2264,8 +2517,8 @@ func TestBuildFullPushNotificationMessageWithMentions(t *testing.T) {
 				"",
 			)
 
-			assert.NotNil(t, msg)
-			assert.Contains(t, msg.Message, tc.ExpectedInBody, tc.Description)
+			require.NotNil(t, msg)
+			assert.Equal(t, tc.ExpectedResult, msg.Message, tc.Description)
 		})
 	}
 }
