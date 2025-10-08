@@ -16,7 +16,7 @@ import {
     isCollapsedThreadsEnabled,
 } from 'mattermost-redux/selectors/entities/preferences';
 import {getAllUserMentionKeys} from 'mattermost-redux/selectors/entities/search';
-import {getCurrentUserId, getCurrentUser, getStatusForUserId, getUser, getUserByUsername} from 'mattermost-redux/selectors/entities/users';
+import {getCurrentUserId, getCurrentUser, getStatusForUserId, getUser} from 'mattermost-redux/selectors/entities/users';
 import {isChannelMuted} from 'mattermost-redux/utils/channel_utils';
 import {ensureString, isSystemMessage, isUserAddedInChannel} from 'mattermost-redux/utils/post_utils';
 import {displayUsername} from 'mattermost-redux/utils/user_utils';
@@ -28,6 +28,7 @@ import {getHistory} from 'utils/browser_history';
 import Constants, {NotificationLevels, UserStatuses, IgnoreChannelMentions, DesktopSound} from 'utils/constants';
 import DesktopApp from 'utils/desktop_api';
 import {stripMarkdown, formatWithRenderer} from 'utils/markdown';
+import DisplayNameMentionRenderer from 'utils/markdown/display_name_mention_renderer';
 import MentionableRenderer from 'utils/markdown/mentionable_renderer';
 import {DesktopNotificationSounds, ding} from 'utils/notification_sounds';
 import {showNotification} from 'utils/notifications';
@@ -215,17 +216,8 @@ const getNotificationUsername = (state: GlobalState, post: Post, msgProps: NewPo
 
 const replaceMentionsWithDisplayNames = (text: string, state: GlobalState): string => {
     const teammateNameDisplay = getTeammateNameDisplaySetting(state);
-    return text.replace(Constants.MENTIONS_REGEX, (match, username) => {
-        if (['channel', 'all', 'here'].includes(username.toLowerCase())) {
-            return match;
-        }
-        const user = getUserByUsername(state, username.toLowerCase());
-        if (user) {
-            const displayName = displayUsername(user, teammateNameDisplay, false);
-            return `@${displayName}`;
-        }
-        return match;
-    });
+    const renderer = new DisplayNameMentionRenderer(state, teammateNameDisplay);
+    return formatWithRenderer(text, renderer);
 };
 
 const getNotificationBody = (state: GlobalState, post: Post, msgProps: NewPostMessageProps) => {
