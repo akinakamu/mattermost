@@ -1792,7 +1792,6 @@ func TestReplaceMentionsWithDisplayNames(t *testing.T) {
 	th := SetupWithStoreMock(t)
 	defer th.TearDown()
 
-	// Mock the required stores
 	mockStore := th.App.Srv().Store().(*mocks.Store)
 	mockUserStore := mocks.UserStore{}
 	mockUserStore.On("Count", mock.Anything).Return(int64(10), nil)
@@ -1807,6 +1806,8 @@ func TestReplaceMentionsWithDisplayNames(t *testing.T) {
 	mockStore.On("Post").Return(&mockPostStore)
 	mockStore.On("System").Return(&mockSystemStore)
 	mockStore.On("GetDBSchemaVersion").Return(1, nil)
+	mockStore.On("FileInfo").Return(&mocks.FileInfoStore{})
+	mockStore.On("Preference").Return(&mocks.PreferenceStore{})
 
 	// Create test users with different display names
 	user1 := &model.User{
@@ -2131,6 +2132,140 @@ func TestReplaceMentionsWithDisplayNamesWithMarkdownParsedText(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			result := th.App.replaceMentionsWithDisplayNames(th.Context, tc.Message, channelId, tc.NameFormat)
 			assert.Equal(t, tc.ExpectedResult, result, tc.Description)
+		})
+	}
+}
+
+func TestBuildFullPushNotificationMessageWithMentions(t *testing.T) {
+	mainHelper.Parallel(t)
+	th := SetupWithStoreMock(t)
+	defer th.TearDown()
+
+	mockStore := th.App.Srv().Store().(*mocks.Store)
+	mockUserStore := mocks.UserStore{}
+	mockUserStore.On("Count", mock.Anything).Return(int64(10), nil)
+	mockPostStore := mocks.PostStore{}
+	mockPostStore.On("GetMaxPostSize").Return(65535, nil)
+	mockSystemStore := mocks.SystemStore{}
+	mockSystemStore.On("GetByName", "UpgradedFromTE").Return(&model.System{Name: "UpgradedFromTE", Value: "false"}, nil)
+	mockSystemStore.On("GetByName", "InstallationDate").Return(&model.System{Name: "InstallationDate", Value: "10"}, nil)
+	mockSystemStore.On("GetByName", "FirstServerRunTimestamp").Return(&model.System{Name: "FirstServerRunTimestamp", Value: "10"}, nil)
+	mockPreferenceStore := mocks.PreferenceStore{}
+	mockFileInfoStore := mocks.FileInfoStore{}
+
+	mockStore.On("User").Return(&mockUserStore)
+	mockStore.On("Post").Return(&mockPostStore)
+	mockStore.On("System").Return(&mockSystemStore)
+	mockStore.On("GetDBSchemaVersion").Return(1, nil)
+	mockStore.On("Preference").Return(&mockPreferenceStore)
+	mockStore.On("FileInfo").Return(&mockFileInfoStore)
+
+	recipientUser := &model.User{
+		Id:       model.NewId(),
+		Username: "recipient",
+		Locale:   "en",
+	}
+
+	user1 := &model.User{
+		Id:        model.NewId(),
+		Username:  "alice",
+		FirstName: "Alice",
+		LastName:  "Wonder",
+		Nickname:  "Ali",
+	}
+
+	user2 := &model.User{
+		Id:        model.NewId(),
+		Username:  "bob",
+		FirstName: "Bob",
+		LastName:  "Smith",
+		Nickname:  "Bobby",
+	}
+
+	channel := &model.Channel{
+		Id:     model.NewId(),
+		TeamId: model.NewId(),
+		Type:   model.ChannelTypeOpen,
+	}
+
+	channelUsers := map[string]*model.User{
+		user1.Id: user1,
+		user2.Id: user2,
+	}
+
+	mockUserStore.On("GetAllProfilesInChannel", mock.Anything, channel.Id, true).Return(channelUsers, nil)
+	mockPreferenceStore.On("Get", recipientUser.Id, model.PreferenceCategoryDisplaySettings, model.PreferenceNameNameFormat).Return(&model.Preference{Value: model.ShowFullName}, nil)
+	mockUserStore.On("GetUnreadCount", recipientUser.Id, mock.Anything).Return(int64(5), nil)
+
+	for name, tc := range map[string]struct {
+		PostMessage    string
+		ExpectedInBody string
+		Description    string
+	}{
+		"simple user mention replacement": {
+			PostMessage:    "Hello @alice, how are you?",
+			ExpectedInBody: "Alice Wonder",
+			Description:    "User mentions should be replaced with display names in the notification body",
+		},
+		"multiple user mentions": {
+			PostMessage:    "@alice and @bob are working together",
+			ExpectedInBody: "Alice Wonder",
+			Description:    "Multiple mentions should be replaced",
+		},
+		"backtick escaped mention preserved": {
+			PostMessage:    "Use `@alice` to mention Alice",
+			ExpectedInBody: "`@alice`",
+			Description:    "Mentions in backticks should not be replaced",
+		},
+		"special mention @channel preserved": {
+			PostMessage:    "@alice please check @channel",
+			ExpectedInBody: "@channel",
+			Description:    "Special @channel mention should not be replaced",
+		},
+		"special mention @all preserved": {
+			PostMessage:    "@alice notify @all",
+			ExpectedInBody: "@all",
+			Description:    "Special @all mention should not be replaced",
+		},
+		"special mention @here preserved": {
+			PostMessage:    "@alice use @here",
+			ExpectedInBody: "@here",
+			Description:    "Special @here mention should not be replaced",
+		},
+		"mixed backtick and real mentions": {
+			PostMessage:    "@alice said to use `@bob` syntax",
+			ExpectedInBody: "Alice Wonder",
+			Description:    "Real mentions replaced but backtick mentions preserved",
+		},
+		"backticked special mention": {
+			PostMessage:    "Type `@channel` to notify everyone, @alice",
+			ExpectedInBody: "`@channel`",
+			Description:    "Backticked special mentions should stay as-is",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			post := &model.Post{
+				Id:        model.NewId(),
+				UserId:    user1.Id,
+				ChannelId: channel.Id,
+				Message:   tc.PostMessage,
+			}
+
+			msg := th.App.buildFullPushNotificationMessage(
+				th.Context,
+				model.FullNotification,
+				post,
+				recipientUser,
+				channel,
+				"test-channel",
+				"@Alice Wonder",
+				false,
+				false,
+				"",
+			)
+
+			assert.NotNil(t, msg)
+			assert.Contains(t, msg.Message, tc.ExpectedInBody, tc.Description)
 		})
 	}
 }
