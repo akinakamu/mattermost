@@ -8,7 +8,7 @@ import Constants from 'utils/constants';
 
 import type {GlobalState} from 'types/store';
 
-import MentionableRenderer from './mentionable_renderer';
+import PlainRenderer from './plain_renderer';
 
 /**
  * Renderer that:
@@ -17,7 +17,7 @@ import MentionableRenderer from './mentionable_renderer';
  *  - Does NOT attempt replacements inside code/codespan
  * Output is used before stripMarkdown() for notification text.
  */
-export default class DisplayNameMentionRenderer extends MentionableRenderer {
+export default class DisplayNameMentionRenderer extends PlainRenderer {
     private state: GlobalState;
     private teammateNameDisplay: string;
 
@@ -30,8 +30,12 @@ export default class DisplayNameMentionRenderer extends MentionableRenderer {
     /**
      * Override code blocks to preserve original code (adding fences back).
      * marked passes only the code content (without the backticks). We re-wrap it.
+     * Note: PlainRenderer.code() takes no parameters, but marked actually passes them.
      */
-    public code(code: string, language?: string | null) {
+    public code(code?: string, language?: string | null): string {
+        if (!code) {
+            return '\n';
+        }
         const info = (language || '').trim();
         // Preserve code blocks by reconstructing the fences (will become plain text after stripMarkdown)
         return `\n\`\`\`${info}\n${code}\n\`\`\`\n`;
@@ -39,8 +43,12 @@ export default class DisplayNameMentionRenderer extends MentionableRenderer {
 
     /**
      * Preserve inline code exactly (re-wrap with backticks).
+     * Note: PlainRenderer.codespan() takes no parameters, but marked actually passes them.
      */
-    public codespan(code: string) {
+    public codespan(code?: string): string {
+        if (!code) {
+            return ' ';
+        }
         return `\`${code}\``;
     }
 
@@ -50,13 +58,11 @@ export default class DisplayNameMentionRenderer extends MentionableRenderer {
      */
     public text(text: string) {
         if (!text || text.indexOf('@') === -1) {
-            return super.text(text);
+            return text;
         }
 
-        // Call parent's text method to maintain existing processing (emoji removal, etc.)
-        const base = super.text(text);
-
-        return base.replace(Constants.MENTIONS_REGEX, (full: string) => {
+        // Replace mentions in text (no emoji removal - preserve original content)
+        return text.replace(Constants.MENTIONS_REGEX, (full: string) => {
             // full = "@username"
             const raw = full.slice(1); // Remove the '@' prefix
             const lower = raw.toLowerCase();
