@@ -6,6 +6,10 @@ This document explains how to use the AlloyDB pg_bigm extension setup workflow.
 
 The `alloydb-pg-bigm-setup.yml` workflow automates the process of connecting to Google Cloud AlloyDB and installing the pg_bigm extension for PostgreSQL. The pg_bigm extension provides full-text search capabilities using bigram (2-gram) indexes, which is particularly useful for searching text in languages like Japanese, Chinese, and Korean.
 
+The workflow uses separate script files for better maintainability:
+- **SQL Script** (`server/scripts/alloydb-setup-pg-bigm.sql`): Contains all SQL commands for creating, verifying, and testing the pg_bigm extension
+- **Shell Script** (`server/scripts/alloydb-setup-pg-bigm.sh`): Handles the Cloud SQL Proxy connection and executes the SQL script
+
 ## Prerequisites
 
 ### 1. Google Cloud Setup
@@ -83,11 +87,32 @@ The workflow automatically runs when changes are pushed to the workflow file its
 3. **Setup Cloud SDK**: Configures gcloud CLI tools
 4. **Install Cloud SQL Proxy**: Downloads and installs the Cloud SQL Proxy for secure database connections
 5. **Install PostgreSQL Client**: Installs `psql` for database operations
-6. **Start Proxy**: Launches Cloud SQL Proxy to create a secure tunnel to AlloyDB
-7. **Create Extension**: Executes `CREATE EXTENSION IF NOT EXISTS pg_bigm;`
-8. **Verify**: Checks that the extension was created successfully
-9. **Test**: Runs a basic test of pg_bigm functionality
-10. **Cleanup**: Stops the Cloud SQL Proxy
+6. **Execute Setup Script**: Runs `server/scripts/alloydb-setup-pg-bigm.sh` which:
+   - Starts Cloud SQL Proxy to create a secure tunnel to AlloyDB
+   - Executes SQL commands from `server/scripts/alloydb-setup-pg-bigm.sql`:
+     - Creates the pg_bigm extension
+     - Verifies the extension was created
+     - Tests basic pg_bigm functionality
+     - Lists all installed extensions
+   - Cleans up and stops the Cloud SQL Proxy
+
+## Script Files
+
+### alloydb-setup-pg-bigm.sh
+
+The shell script handles:
+- Environment variable validation
+- Cloud SQL Proxy lifecycle management
+- SQL script execution
+- Error handling and cleanup
+
+### alloydb-setup-pg-bigm.sql
+
+The SQL script contains:
+- `CREATE EXTENSION IF NOT EXISTS pg_bigm;` - Creates the extension
+- Verification queries to check extension installation
+- Test queries to validate pg_bigm functionality
+- Extension listing for confirmation
 
 ## Troubleshooting
 
@@ -121,19 +146,35 @@ If pg_bigm is not available in your AlloyDB instance:
 
 Successful workflow run output:
 ```
-Connecting to AlloyDB and creating pg_bigm extension...
+==========================================
+AlloyDB pg_bigm Extension Setup
+==========================================
+Instance: project-id:region:cluster:instance
+Database: mattermost
+User: postgres
+==========================================
+Starting Cloud SQL Proxy...
+Waiting for Cloud SQL Proxy to initialize...
+Cloud SQL Proxy is running (PID: 12345)
+
+Executing SQL script: /home/runner/work/mattermost/mattermost/server/scripts/alloydb-setup-pg-bigm.sql
+==========================================
 CREATE EXTENSION
+ extname | extversion
+---------+------------
+ pg_bigm | 1.2
+(1 row)
 
-Verifying pg_bigm extension...
- oid  | extname | extowner | extnamespace | ...
-------+---------+----------+--------------+-----
- 12345| pg_bigm |       10 |         2200 | ...
+  bigm_test
+-------------
+ {" t","te","es","st","t "}
+(1 row)
 
-Listing all installed extensions...
-      Name      | Version |   Schema   |         Description
-----------------+---------+------------+------------------------------
- pg_bigm        | 1.2     | public     | text index searching...
- plpgsql        | 1.0     | pg_catalog | PL/pgSQL procedural language
+==========================================
+✓ pg_bigm extension setup completed successfully
+
+Stopping Cloud SQL Proxy...
+Cleanup completed
 ```
 
 ## Security Considerations

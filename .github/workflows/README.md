@@ -32,6 +32,10 @@ webapp-ci-master
 
 The `alloydb-pg-bigm-setup.yml` workflow is used to connect to Google Cloud AlloyDB and install the pg_bigm extension for PostgreSQL. This extension provides full-text search capabilities with bigram indexing.
 
+The workflow uses scripts located in `server/scripts/`:
+- `alloydb-setup-pg-bigm.sh`: Shell script that handles connection and execution
+- `alloydb-setup-pg-bigm.sql`: SQL commands for creating and verifying the extension
+
 #### Prerequisites
 
 The following secrets must be configured in the repository:
@@ -42,7 +46,7 @@ The following secrets must be configured in the repository:
 
 #### Usage
 
-The workflow can be triggered manually via workflow_dispatch or automatically on changes to the workflow file itself. When triggered manually, you can specify:
+The workflow can be triggered manually via workflow_dispatch or automatically on changes to the workflow or script files. When triggered manually, you can specify:
 - `alloydb_instance`: The AlloyDB instance connection name
 - `database_name`: The target database name (defaults to 'mattermost')
 
@@ -51,6 +55,8 @@ The workflow can be triggered manually via workflow_dispatch or automatically on
 1. Authenticates to Google Cloud using service account credentials
 2. Sets up Cloud SQL Proxy to connect to AlloyDB
 3. Installs PostgreSQL client tools
-4. Creates the pg_bigm extension in the specified database
-5. Verifies the extension was created successfully
-6. Tests basic pg_bigm functionality
+4. Executes the setup script which:
+   - Starts Cloud SQL Proxy
+   - Runs SQL commands to create and verify pg_bigm extension
+   - Tests basic pg_bigm functionality
+   - Cleans up the proxy connection

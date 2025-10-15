@@ -17,6 +17,7 @@ on:
       - master
     paths:
       - '.github/workflows/alloydb-pg-bigm-setup.yml'
+      - 'server/scripts/alloydb-setup-pg-bigm.*'
 
 jobs:
   setup-pg-bigm:
@@ -51,46 +52,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y postgresql-client
 
-      - name: Start Cloud SQL Proxy
-        run: |
-          INSTANCE="${{ github.event.inputs.alloydb_instance }}"
-          INSTANCE="${INSTANCE:-${{ secrets.ALLOYDB_INSTANCE }}}"
-          cloud-sql-proxy "${INSTANCE}" --port 5432 &
-          echo "Waiting for Cloud SQL Proxy to be ready..."
-          sleep 10
-
-      - name: Create pg_bigm extension
+      - name: Setup pg_bigm extension
         env:
+          ALLOYDB_INSTANCE: ${{ github.event.inputs.alloydb_instance || secrets.ALLOYDB_INSTANCE }}
           PGPASSWORD: ${{ secrets.ALLOYDB_PASSWORD }}
-          PGHOST: localhost
-          PGPORT: 5432
           PGUSER: ${{ secrets.ALLOYDB_USER }}
           PGDATABASE: ${{ github.event.inputs.database_name || 'mattermost' }}
         run: |
-          echo "Connecting to AlloyDB and creating pg_bigm extension..."
-          psql -c "CREATE EXTENSION IF NOT EXISTS pg_bigm;" \
-            || echo "Extension may already exist or requires privileges"
-
-          echo "Verifying pg_bigm extension..."
-          psql -c "SELECT * FROM pg_extension WHERE extname = 'pg_bigm';" \
-            || true
-
-          echo "Listing all installed extensions..."
-          psql -c "\dx"
-
-      - name: Test pg_bigm functionality
-        env:
-          PGPASSWORD: ${{ secrets.ALLOYDB_PASSWORD }}
-          PGHOST: localhost
-          PGPORT: 5432
-          PGUSER: ${{ secrets.ALLOYDB_USER }}
-          PGDATABASE: ${{ github.event.inputs.database_name || 'mattermost' }}
-        run: |
-          echo "Testing pg_bigm functionality..."
-          psql -c "SELECT show_bigm('test');" \
-            || echo "pg_bigm test completed"
-
-      - name: Cleanup
-        if: always()
-        run: |
-          pkill cloud-sql-proxy || true
+          cd server/scripts
+          ./alloydb-setup-pg-bigm.sh
