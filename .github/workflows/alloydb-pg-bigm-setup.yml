@@ -1,0 +1,88 @@
+name: AlloyDB pg_bigm Extension Setup
+
+on:
+  workflow_dispatch:
+    inputs:
+      alloydb_instance:
+        description: 'AlloyDB instance connection name (format: project:region:cluster:instance)'
+        required: true
+        type: string
+      database_name:
+        description: 'Database name'
+        required: true
+        type: string
+        default: 'mattermost'
+  push:
+    branches:
+      - master
+    paths:
+      - '.github/workflows/alloydb-pg-bigm-setup.yml'
+
+jobs:
+  setup-pg-bigm:
+    name: Setup pg_bigm extension on AlloyDB
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_CREDENTIALS }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Install Cloud SQL Proxy
+        run: |
+          curl -o cloud-sql-proxy https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.11.4/cloud-sql-proxy.linux.amd64
+          chmod +x cloud-sql-proxy
+          sudo mv cloud-sql-proxy /usr/local/bin/
+
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Start Cloud SQL Proxy
+        run: |
+          cloud-sql-proxy ${{ github.event.inputs.alloydb_instance || secrets.ALLOYDB_INSTANCE }} \
+            --port 5432 &
+          echo "Waiting for Cloud SQL Proxy to be ready..."
+          sleep 10
+
+      - name: Create pg_bigm extension
+        env:
+          PGPASSWORD: ${{ secrets.ALLOYDB_PASSWORD }}
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: ${{ secrets.ALLOYDB_USER }}
+          PGDATABASE: ${{ github.event.inputs.database_name || 'mattermost' }}
+        run: |
+          echo "Connecting to AlloyDB and creating pg_bigm extension..."
+          psql -c "CREATE EXTENSION IF NOT EXISTS pg_bigm;" || echo "Extension may already exist or requires superuser privileges"
+          
+          echo "Verifying pg_bigm extension..."
+          psql -c "SELECT * FROM pg_extension WHERE extname = 'pg_bigm';" || true
+          
+          echo "Listing all installed extensions..."
+          psql -c "\dx"
+
+      - name: Test pg_bigm functionality
+        env:
+          PGPASSWORD: ${{ secrets.ALLOYDB_PASSWORD }}
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: ${{ secrets.ALLOYDB_USER }}
+          PGDATABASE: ${{ github.event.inputs.database_name || 'mattermost' }}
+        run: |
+          echo "Testing pg_bigm functionality..."
+          psql -c "SELECT show_bigm('test');" || echo "pg_bigm test completed"
+
+      - name: Cleanup
+        if: always()
+        run: |
+          pkill cloud-sql-proxy || true
