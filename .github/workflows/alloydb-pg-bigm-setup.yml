@@ -1,0 +1,63 @@
+name: AlloyDB pg_bigm Extension Setup
+
+on:
+  workflow_dispatch:
+    inputs:
+      alloydb_instance:
+        description: 'AlloyDB instance connection name'
+        required: true
+        type: string
+      database_name:
+        description: 'Database name'
+        required: true
+        type: string
+        default: 'mattermost'
+  push:
+    branches:
+      - master
+    paths:
+      - '.github/workflows/alloydb-pg-bigm-setup.yml'
+      - 'server/scripts/alloydb-setup-pg-bigm.*'
+
+jobs:
+  setup-pg-bigm:
+    name: Setup pg_bigm extension on AlloyDB
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        # v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_CREDENTIALS }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Install Cloud SQL Proxy
+        run: |
+          PROXY_URL="https://storage.googleapis.com/cloud-sql-connectors"
+          PROXY_URL="${PROXY_URL}/cloud-sql-proxy/v2.11.4"
+          PROXY_URL="${PROXY_URL}/cloud-sql-proxy.linux.amd64"
+          curl -o cloud-sql-proxy "${PROXY_URL}"
+          chmod +x cloud-sql-proxy
+          sudo mv cloud-sql-proxy /usr/local/bin/
+
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Setup pg_bigm extension
+        env:
+          ALLOYDB_INSTANCE: ${{ github.event.inputs.alloydb_instance || secrets.ALLOYDB_INSTANCE }}
+          PGPASSWORD: ${{ secrets.ALLOYDB_PASSWORD }}
+          PGUSER: ${{ secrets.ALLOYDB_USER }}
+          PGDATABASE: ${{ github.event.inputs.database_name || 'mattermost' }}
+        run: |
+          cd server/scripts
+          ./alloydb-setup-pg-bigm.sh
