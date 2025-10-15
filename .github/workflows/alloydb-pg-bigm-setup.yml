@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       alloydb_instance:
-        description: 'AlloyDB instance connection name (format: project:region:cluster:instance)'
+        description: 'AlloyDB instance connection name'
         required: true
         type: string
       database_name:
@@ -22,10 +22,11 @@ jobs:
   setup-pg-bigm:
     name: Setup pg_bigm extension on AlloyDB
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout repository
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        # v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
       - name: Authenticate to Google Cloud
         id: auth
@@ -38,7 +39,10 @@ jobs:
 
       - name: Install Cloud SQL Proxy
         run: |
-          curl -o cloud-sql-proxy https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.11.4/cloud-sql-proxy.linux.amd64
+          PROXY_URL="https://storage.googleapis.com/cloud-sql-connectors"
+          PROXY_URL="${PROXY_URL}/cloud-sql-proxy/v2.11.4"
+          PROXY_URL="${PROXY_URL}/cloud-sql-proxy.linux.amd64"
+          curl -o cloud-sql-proxy "${PROXY_URL}"
           chmod +x cloud-sql-proxy
           sudo mv cloud-sql-proxy /usr/local/bin/
 
@@ -49,8 +53,9 @@ jobs:
 
       - name: Start Cloud SQL Proxy
         run: |
-          cloud-sql-proxy ${{ github.event.inputs.alloydb_instance || secrets.ALLOYDB_INSTANCE }} \
-            --port 5432 &
+          INSTANCE="${{ github.event.inputs.alloydb_instance }}"
+          INSTANCE="${INSTANCE:-${{ secrets.ALLOYDB_INSTANCE }}}"
+          cloud-sql-proxy "${INSTANCE}" --port 5432 &
           echo "Waiting for Cloud SQL Proxy to be ready..."
           sleep 10
 
@@ -63,11 +68,13 @@ jobs:
           PGDATABASE: ${{ github.event.inputs.database_name || 'mattermost' }}
         run: |
           echo "Connecting to AlloyDB and creating pg_bigm extension..."
-          psql -c "CREATE EXTENSION IF NOT EXISTS pg_bigm;" || echo "Extension may already exist or requires superuser privileges"
-          
+          psql -c "CREATE EXTENSION IF NOT EXISTS pg_bigm;" \
+            || echo "Extension may already exist or requires privileges"
+
           echo "Verifying pg_bigm extension..."
-          psql -c "SELECT * FROM pg_extension WHERE extname = 'pg_bigm';" || true
-          
+          psql -c "SELECT * FROM pg_extension WHERE extname = 'pg_bigm';" \
+            || true
+
           echo "Listing all installed extensions..."
           psql -c "\dx"
 
@@ -80,7 +87,8 @@ jobs:
           PGDATABASE: ${{ github.event.inputs.database_name || 'mattermost' }}
         run: |
           echo "Testing pg_bigm functionality..."
-          psql -c "SELECT show_bigm('test');" || echo "pg_bigm test completed"
+          psql -c "SELECT show_bigm('test');" \
+            || echo "pg_bigm test completed"
 
       - name: Cleanup
         if: always()
