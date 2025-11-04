@@ -1,10 +1,12 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {getUserByUsername} from 'mattermost-redux/selectors/entities/users';
+import {getAllGroupsForReferenceByName} from 'mattermost-redux/selectors/entities/groups';
+import {getUsersByUsername} from 'mattermost-redux/selectors/entities/users';
 import {displayUsername} from 'mattermost-redux/utils/user_utils';
 
 import Constants from 'utils/constants';
+import {getUserOrGroupFromMentionName} from 'utils/post_utils';
 
 import type {GlobalState} from 'types/store';
 
@@ -61,24 +63,36 @@ export default class DisplayNameMentionRenderer extends PlainRenderer {
             return text;
         }
 
+        // Get users and groups from state
+        const usersByUsername = getUsersByUsername(this.state);
+        const groupsByName = getAllGroupsForReferenceByName(this.state);
+
         // Replace mentions in text (no emoji removal - preserve original content)
         return text.replace(Constants.MENTIONS_REGEX, (full: string) => {
-            // full = "@username"
-            const raw = full.slice(1); // Remove the '@' prefix
-            const lower = raw.toLowerCase();
+            // full = "@username" or "@username." etc (with trailing punctuation)
+            const mentionName = full.slice(1); // Remove the '@' prefix
 
             // Keep special mentions unchanged
-            if (Constants.SPECIAL_MENTIONS.includes(lower)) {
+            if (Constants.SPECIAL_MENTIONS.includes(mentionName.toLowerCase())) {
                 return full;
             }
 
-            const user = getUserByUsername(this.state, lower);
-            if (!user) {
-                return full;
+            // Get user or group from mention name (handles trailing punctuation)
+            const [user, group] = getUserOrGroupFromMentionName(mentionName, usersByUsername, groupsByName);
+
+            if (user) {
+                // Extract any trailing punctuation/suffix after the actual username
+                const userMentionNameSuffix = mentionName.substring(user.username.length);
+                const display = displayUsername(user, this.teammateNameDisplay, false);
+                return `@${display}${userMentionNameSuffix}`;
+            } else if (group) {
+                // Extract any trailing punctuation/suffix after the actual group name
+                const groupMentionNameSuffix = mentionName.substring(group.name.length);
+                return `@${group.name}${groupMentionNameSuffix}`;
             }
 
-            const display = displayUsername(user, this.teammateNameDisplay, false);
-            return `@${display}`;
+            // Unknown user/group - return original
+            return full;
         });
     }
 }

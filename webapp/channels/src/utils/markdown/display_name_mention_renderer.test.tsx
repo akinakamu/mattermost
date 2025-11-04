@@ -30,6 +30,19 @@ describe('DisplayNameMentionRenderer', () => {
                 profilesWithoutTeam: {},
                 profilesInTeam: {},
             },
+            groups: {
+                groups: {
+                    group1: {
+                        id: 'group1',
+                        name: 'developers',
+                        display_name: 'Developers',
+                        allow_reference: true,
+                    },
+                },
+                syncables: {},
+                myGroups: [],
+                stats: {},
+            },
             preferences: {
                 myPreferences: {
                     'display_settings--name_format': {
@@ -50,9 +63,39 @@ describe('DisplayNameMentionRenderer', () => {
             outputText: 'Hey @Johnny how are you?',
         },
         {
+            description: 'replaces mention with trailing period',
+            inputText: 'Hi @john.doe.',
+            outputText: 'Hi @Johnny.',
+        },
+        {
+            description: 'replaces mention with trailing comma',
+            inputText: 'Hi @john.doe, welcome!',
+            outputText: 'Hi @Johnny, welcome!',
+        },
+        {
+            description: 'replaces mention with trailing exclamation',
+            inputText: 'Great job @john.doe!',
+            outputText: 'Great job @Johnny!',
+        },
+        {
+            description: 'replaces mention with trailing question mark',
+            inputText: 'Are you there @john.doe?',
+            outputText: 'Are you there @Johnny?',
+        },
+        {
             description: 'replaces multiple mentions',
             inputText: 'Meeting with @john.doe and @jane.smith',
             outputText: 'Meeting with @Johnny and @Jane Smith',
+        },
+        {
+            description: 'replaces group mention',
+            inputText: 'Hey @developers, check this out',
+            outputText: 'Hey @developers, check this out',
+        },
+        {
+            description: 'replaces group mention with trailing punctuation',
+            inputText: 'Attention @developers.',
+            outputText: 'Attention @developers.',
         },
         {
             description: 'preserves special mention @channel',
