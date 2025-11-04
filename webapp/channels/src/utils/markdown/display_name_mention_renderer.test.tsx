@@ -24,11 +24,32 @@ describe('DisplayNameMentionRenderer', () => {
                         last_name: 'Smith',
                         nickname: '',
                     },
+                    user3: {
+                        id: 'user3',
+                        username: 'testuser',
+                        first_name: 'Test',
+                        last_name: 'User',
+                        nickname: 'Tester',
+                    },
                 },
                 profilesInChannel: {},
                 profilesNotInChannel: {},
                 profilesWithoutTeam: {},
                 profilesInTeam: {},
+            },
+            groups: {
+                groups: {
+                    group1: {
+                        id: 'group1',
+                        name: 'developers',
+                        display_name: 'Developers',
+                        member_count: 5,
+                        allow_reference: true,
+                    },
+                },
+                syncables: {},
+                myGroups: [],
+                stats: {},
             },
             preferences: {
                 myPreferences: {
@@ -103,6 +124,36 @@ describe('DisplayNameMentionRenderer', () => {
             description: 'strips markdown after replacing mentions',
             inputText: '**Hi** @john.doe',
             outputText: 'Hi @Johnny',
+        },
+        {
+            description: 'preserves punctuation after user mention',
+            inputText: 'Hi @john.doe.',
+            outputText: 'Hi @Johnny.',
+        },
+        {
+            description: 'preserves multiple punctuation after user mention',
+            inputText: 'Hello @jane.smith...',
+            outputText: 'Hello @Jane Smith...',
+        },
+        {
+            description: 'handles mention with trailing dash',
+            inputText: 'Contact @testuser-',
+            outputText: 'Contact @Tester-',
+        },
+        {
+            description: 'handles mention with trailing underscore',
+            inputText: 'Ping @testuser_',
+            outputText: 'Ping @Tester_',
+        },
+        {
+            description: 'handles group mention',
+            inputText: 'Hello @developers team',
+            outputText: 'Hello @developers team',
+        },
+        {
+            description: 'preserves punctuation after group mention',
+            inputText: 'Hello @developers.',
+            outputText: 'Hello @developers.',
         },
     ];
 
