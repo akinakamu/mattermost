@@ -2073,6 +2073,16 @@ func (s *SqlPostStore) search(teamId string, userId string, params *model.Search
 
 	if terms == "" && excludedTerms == "" {
 		// we've already confirmed that we have a channel or user to search for
+	} else if true {
+		// Query generation customized for Japanese by bypassing the original implementation
+		// build LIKE search query using pg_bigm index
+		terms = wildCardRegex.ReplaceAllLiteralString(terms, "%")
+		excludedTerms = wildCardRegex.ReplaceAllLiteralString(excludedTerms, "%")
+
+		phrases := quotedStringsRegex.FindAllString(terms, -1)
+		terms = quotedStringsRegex.ReplaceAllString(terms, " ")
+
+		baseQuery = s.generateLikeSearchQuery(baseQuery, params, phrases, terms, excludedTerms, searchType)
 	} else {
 		// Parse text for wildcards
 		terms = wildCardRegex.ReplaceAllLiteralString(terms, ":* ")
