@@ -632,16 +632,25 @@ func (fs SqlFileInfoStore) Search(rctx request.CTX, paramsList []*model.SearchPa
 		if terms == "" && excludedTerms == "" {
 			// we've already confirmed that we have a channel or user to search for
 		} else if fs.DriverName() == model.DatabaseDriverPostgres {
-			// Perse text for LIKE wildcards
-			if wildcard, err := regexp.Compile(`\*($| )`); err == nil {
-				terms = wildcard.ReplaceAllLiteralString(terms, "%")
-				excludedTerms = wildcard.ReplaceAllLiteralString(excludedTerms, "%")
+			// Use LIKE search with pg_bigm indexes for FileInfo.Name and FileInfo.Content
+			var likeConditions sq.Or
+			
+			if terms != "" {
+				if likeClause := fs.buildFileInfoLIKEClause(terms, "FileInfo.Name", "FileInfo.Content"); likeClause != nil {
+					likeConditions = append(likeConditions, likeClause)
+				}
 			}
-
-			query = query.Where(sqOr{
-				sq.Expr(),
-				sq.Expr(),
-			})
+			
+			if excludedTerms != "" {
+				// For excluded terms, we need to negate the LIKE clause
+				if likeClause := fs.buildFileInfoLIKEClause(excludedTerms, "FileInfo.Name", "FileInfo.Content"); likeClause != nil {
+					likeConditions = append(likeConditions, sq.Expr("NOT (?)", likeClause))
+				}
+			}
+			
+			if len(likeConditions) > 0 {
+				query = query.Where(likeConditions)
+			}
 		} else {
 			// Parse text for wildcards
 			if wildcard, err := regexp.Compile(`\*($| )`); err == nil {
