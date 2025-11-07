@@ -412,7 +412,7 @@ func TestGenerateLikeSearchQuery(t *testing.T) {
 		require.NoError(t, err)
 		assert.Contains(t, sql, "LOWER(Posts.Message) LIKE ? ESCAPE '\\'")
 		assert.Contains(t, sql, "LOWER(Posts.Message) NOT LIKE ? ESCAPE '\\'")
-		// The term "hello" and the literal "" (two quotes) as excluded term, minus the standalone "-" which is empty after trimming
+		// The term "hello" is included, and the literal "" (two quotes) is treated as an excluded term. The standalone "-" is ignored as it becomes empty after trimming.
 		assert.Equal(t, 2, len(args))
 		assert.Equal(t, "%hello%", args[0])
 		assert.Equal(t, `%""%`, args[1])
