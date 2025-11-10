@@ -632,16 +632,32 @@ func (fs SqlFileInfoStore) Search(rctx request.CTX, paramsList []*model.SearchPa
 		if terms == "" && excludedTerms == "" {
 			// we've already confirmed that we have a channel or user to search for
 		} else if fs.DriverName() == model.DatabaseDriverPostgres {
-			// Perse text for LIKE wildcards
-			if wildcard, err := regexp.Compile(`\*($| )`); err == nil {
-				terms = wildcard.ReplaceAllLiteralString(terms, "%")
-				excludedTerms = wildcard.ReplaceAllLiteralString(excludedTerms, "%")
+			// Use LIKE search with pg_bigm indexes for FileInfo.Name and FileInfo.Content
+			var conditions sq.And
+			
+			if terms != "" {
+				likeTerm := sanitizeFileInfoSearchTerm(terms)
+				if likeTerm != "" {
+					conditions = append(conditions, sq.Or{
+						sq.Expr("LOWER(FileInfo.Name) LIKE LOWER(?) ESCAPE '*'", likeTerm),
+						sq.Expr("LOWER(FileInfo.Content) LIKE LOWER(?) ESCAPE '*'", likeTerm),
+					})
+				}
 			}
-
-			query = query.Where(sqOr{
-				sq.Expr(),
-				sq.Expr(),
-			})
+			
+			if excludedTerms != "" {
+				excludeLikeTerm := sanitizeFileInfoSearchTerm(excludedTerms)
+				if excludeLikeTerm != "" {
+					conditions = append(conditions, sq.Expr("NOT (?)", sq.Or{
+						sq.Expr("LOWER(FileInfo.Name) LIKE LOWER(?) ESCAPE '*'", excludeLikeTerm),
+						sq.Expr("LOWER(FileInfo.Content) LIKE LOWER(?) ESCAPE '*'", excludeLikeTerm),
+					}))
+				}
+			}
+			
+			if len(conditions) > 0 {
+				query = query.Where(conditions)
+			}
 		} else {
 			// Parse text for wildcards
 			if wildcard, err := regexp.Compile(`\*($| )`); err == nil {
