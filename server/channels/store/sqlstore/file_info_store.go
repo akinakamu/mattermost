@@ -636,15 +636,22 @@ func (fs SqlFileInfoStore) Search(rctx request.CTX, paramsList []*model.SearchPa
 			var conditions sq.And
 			
 			if terms != "" {
-				if likeClause := fs.buildFileInfoLIKEClause(terms, "FileInfo.Name", "FileInfo.Content"); likeClause != nil {
-					conditions = append(conditions, likeClause)
+				likeTerm := sanitizeFileInfoSearchTerm(terms)
+				if likeTerm != "" {
+					conditions = append(conditions, sq.Or{
+						sq.Expr("LOWER(FileInfo.Name) LIKE LOWER(?) ESCAPE '*'", likeTerm),
+						sq.Expr("LOWER(FileInfo.Content) LIKE LOWER(?) ESCAPE '*'", likeTerm),
+					})
 				}
 			}
 			
 			if excludedTerms != "" {
-				// For excluded terms, we need to negate the LIKE clause
-				if likeClause := fs.buildFileInfoLIKEClause(excludedTerms, "FileInfo.Name", "FileInfo.Content"); likeClause != nil {
-					conditions = append(conditions, sq.Expr("NOT (?)", likeClause))
+				excludeLikeTerm := sanitizeFileInfoSearchTerm(excludedTerms)
+				if excludeLikeTerm != "" {
+					conditions = append(conditions, sq.Expr("NOT (?)", sq.Or{
+						sq.Expr("LOWER(FileInfo.Name) LIKE LOWER(?) ESCAPE '*'", excludeLikeTerm),
+						sq.Expr("LOWER(FileInfo.Content) LIKE LOWER(?) ESCAPE '*'", excludeLikeTerm),
+					}))
 				}
 			}
 			
