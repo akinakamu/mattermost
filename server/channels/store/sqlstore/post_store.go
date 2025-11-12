@@ -2878,11 +2878,13 @@ func (s *SqlPostStore) SearchPostsForUser(rctx request.CTX, paramsList []*model.
 	}
 
 	// Call search with the entire paramsList - it will handle combining all queries
+	// search() sets HasNext flag which will be preserved in PostSearchResults
 	postList, err := s.search(teamId, userId, paramsList, false, false, page, perPage)
 	if err != nil {
 		return nil, err
 	}
 
+	// MakePostSearchResults preserves the HasNext flag from postList
 	return model.MakePostSearchResults(postList, nil), nil
 }
 
