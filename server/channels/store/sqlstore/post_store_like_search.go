@@ -93,6 +93,33 @@ func buildExcludedPhrasesQuery(excludedPhrases []string, searchType string, excl
 	return excludedClauses, excludedArgs
 }
 
+// buildExactHashtagQuery builds SQL conditions for exact hashtag matching
+// Hashtags are stored as space-separated strings like " #golang #mattermost #programming"
+// This function creates conditions to match exact tokens (like Bleve's standard analyzer)
+func buildExactHashtagQuery(terms []string, searchClauses []string, searchArgs []any) ([]string, []any) {
+	for _, term := range terms {
+		if !strings.HasPrefix(term, "#") {
+			continue
+		}
+
+		// For exact hashtag matching, we need to match the tag as a complete token
+		// Hashtags are stored with spaces: " #tag1 #tag2 #tag3"
+		// We need to match: " #tag " (middle), " #tag" (end), or "#tag " (start)
+
+		// Build OR condition for: start, middle, or end position
+		hashtagClause := fmt.Sprintf("(Hashtags LIKE ? ESCAPE '\\' OR Hashtags LIKE ? ESCAPE '\\' OR Hashtags = ?)")
+		searchClauses = append(searchClauses, hashtagClause)
+
+		// " #tag " - tag in the middle or alone with surrounding spaces
+		searchArgs = append(searchArgs, "% "+term+" %")
+		// " #tag" - tag at the end
+		searchArgs = append(searchArgs, "% "+term)
+		// " #tag " - tag at the start or standalone (exact match with one trailing space)
+		searchArgs = append(searchArgs, " "+term+" ")
+	}
+	return searchClauses, searchArgs
+}
+
 func (s *SqlPostStore) generateLikeSearchQueryForPosts(baseQuery sq.SelectBuilder, params *model.SearchParams, phrases []string, terms string, excludedTerms string, excludedPhrases []string, searchType string) sq.SelectBuilder {
 	var searchClauses []string
 	var searchArgs []any
@@ -102,6 +129,56 @@ func (s *SqlPostStore) generateLikeSearchQueryForPosts(baseQuery sq.SelectBuilde
 
 	// Phrase search: search for strings enclosed in “” without splitting them.
 	searchClauses, searchArgs = buildPhrasesQuery(phrases, searchType, searchClauses, searchArgs)
+
+	// Normal search by word
+	termWords := strings.Fields(terms)
+	searchClauses, searchArgs = buildTermsQuery(termWords, searchType, searchClauses, searchArgs)
+
+	if len(searchClauses) > 0 {
+		logicalOperator := " AND "
+		if params.OrTerms {
+			logicalOperator = " OR "
+		}
+		baseQuery = baseQuery.Where("("+strings.Join(searchClauses, logicalOperator)+")", searchArgs...)
+	}
+
+	// Excluded words
+	excludedWords := strings.Fields(excludedTerms)
+	if len(excludedWords) > 0 || len(excludedPhrases) > 0 {
+		var excludedClauses []string
+		var excludedArgs []any
+
+		excludedClauses, excludedArgs = buildExcludedTermsQuery(excludedWords, searchType, excludedClauses, excludedArgs)
+		excludedClauses, excludedArgs = buildExcludedPhrasesQuery(excludedPhrases, searchType, excludedClauses, excludedArgs)
+
+		if len(excludedClauses) > 0 {
+			baseQuery = baseQuery.Where(strings.Join(excludedClauses, " AND "), excludedArgs...)
+		}
+	}
+
+	return baseQuery
+}
+
+// generateLikeSearchQueryForPostsWithHashtags builds LIKE search query with support for exact hashtag matching
+func (s *SqlPostStore) generateLikeSearchQueryForPostsWithHashtags(baseQuery sq.SelectBuilder, params *model.SearchParams, phrases []string, terms string, excludedTerms string, excludedPhrases []string, searchType string, hashtagTerms []string) sq.SelectBuilder {
+	var searchClauses []string
+	var searchArgs []any
+
+	// Make both index and query lowercase for case-insensitive searching.
+	phrases, terms, excludedTerms, excludedPhrases, searchType = toLowerSearchArgsForPosts(phrases, terms, excludedTerms, excludedPhrases, searchType)
+
+	// Phrase search: search for strings enclosed in "" without splitting them.
+	searchClauses, searchArgs = buildPhrasesQuery(phrases, searchType, searchClauses, searchArgs)
+
+	// Add exact hashtag matching if hashtag terms provided
+	if len(hashtagTerms) > 0 {
+		// Convert to lowercase for case-insensitive matching
+		lowerHashtagTerms := make([]string, len(hashtagTerms))
+		for i, term := range hashtagTerms {
+			lowerHashtagTerms[i] = strings.ToLower(term)
+		}
+		searchClauses, searchArgs = buildExactHashtagQuery(lowerHashtagTerms, searchClauses, searchArgs)
+	}
 
 	// Normal search by word
 	termWords := strings.Fields(terms)

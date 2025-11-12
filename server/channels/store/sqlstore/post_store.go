@@ -2080,16 +2080,18 @@ func (s *SqlPostStore) search(teamId string, userId string, paramsList []*model.
 	var allExcludedTerms []string
 	var allPhrases []string
 	var allExcludedPhrases []string
-	hashtagTermMap := map[string]bool{}
+	var hashtagTerms []string
 
 	for _, params := range paramsList {
 		terms := params.Terms
 		excludedTerms := params.ExcludedTerms
 
 		if params.IsHashtag {
-			// For hashtag searches, collect terms for later exact matching
+			// For hashtag searches, collect terms for SQL-level exact matching
 			for term := range strings.SplitSeq(terms, " ") {
-				hashtagTermMap[strings.ToUpper(term)] = true
+				if term != "" {
+					hashtagTerms = append(hashtagTerms, term)
+				}
 			}
 		}
 
@@ -2125,7 +2127,7 @@ func (s *SqlPostStore) search(teamId string, userId string, paramsList []*model.
 	combinedTerms := strings.Join(allTerms, " ")
 	combinedExcludedTerms := strings.Join(allExcludedTerms, " ")
 
-	if combinedTerms == "" && combinedExcludedTerms == "" && len(allPhrases) == 0 && len(allExcludedPhrases) == 0 {
+	if combinedTerms == "" && combinedExcludedTerms == "" && len(allPhrases) == 0 && len(allExcludedPhrases) == 0 && len(hashtagTerms) == 0 {
 		// we've already confirmed that we have a channel or user to search for
 	} else if true {
 		// Query generation customized for Japanese by bypassing the original implementation
@@ -2134,7 +2136,7 @@ func (s *SqlPostStore) search(teamId string, userId string, paramsList []*model.
 		// Determine search type - use "Message" for combined hashtag/message search
 		searchType := "Message"
 
-		baseQuery = s.generateLikeSearchQueryForPosts(baseQuery, params, allPhrases, combinedTerms, combinedExcludedTerms, allExcludedPhrases, searchType)
+		baseQuery = s.generateLikeSearchQueryForPostsWithHashtags(baseQuery, params, allPhrases, combinedTerms, combinedExcludedTerms, allExcludedPhrases, searchType, hashtagTerms)
 	} else {
 		// Parse text for wildcards
 		combinedTerms = wildCardRegex.ReplaceAllLiteralString(combinedTerms, ":* ")
@@ -2220,20 +2222,9 @@ func (s *SqlPostStore) search(teamId string, userId string, paramsList []*model.
 		mlog.Warn("Query error searching posts.", mlog.String("error", trimInput(err.Error())))
 		// Don't return the error to the caller as it is of no use to the user. Instead return an empty set of search results.
 	} else {
+		// SQL-level exact hashtag matching is now handled in generateLikeSearchQueryForPostsWithHashtags
+		// No need for Go-level post-processing
 		for _, p := range posts {
-			// Perform exact hashtag matching if we have hashtag searches
-			if len(hashtagTermMap) > 0 {
-				exactMatch := false
-				for tag := range strings.SplitSeq(p.Hashtags, " ") {
-					if hashtagTermMap[strings.ToUpper(tag)] {
-						exactMatch = true
-						break
-					}
-				}
-				if !exactMatch {
-					continue
-				}
-			}
 			list.AddPost(p)
 			list.AddOrder(p.Id)
 		}
