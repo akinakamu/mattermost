@@ -2024,16 +2024,22 @@ func (s *SqlPostStore) buildSearchPostFilterClause(teamID string, fromUsers []st
 }
 
 func (s *SqlPostStore) Search(teamId string, userId string, params *model.SearchParams) (*model.PostList, error) {
-	return s.search(teamId, userId, params, true, true)
+	return s.search(teamId, userId, params, true, true, 0, 60)
 }
 
-func (s *SqlPostStore) search(teamId string, userId string, params *model.SearchParams, channelsByName bool, userByUsername bool) (*model.PostList, error) {
+func (s *SqlPostStore) search(teamId string, userId string, params *model.SearchParams, channelsByName bool, userByUsername bool, page int, perPage int) (*model.PostList, error) {
 	list := model.NewPostList()
 	if params.Terms == "" && params.ExcludedTerms == "" &&
 		len(params.InChannels) == 0 && len(params.ExcludedChannels) == 0 &&
 		len(params.FromUsers) == 0 && len(params.ExcludedUsers) == 0 &&
 		params.OnDate == "" && params.AfterDate == "" && params.BeforeDate == "" {
 		return list, nil
+	}
+
+	// Use perPage for limit, default to 60 if not specified
+	limit := uint64(perPage)
+	if perPage <= 0 {
+		limit = 60
 	}
 
 	baseQuery := s.getQueryBuilder().Select(
@@ -2043,7 +2049,12 @@ func (s *SqlPostStore) search(teamId string, userId string, params *model.Search
 		Where("q2.DeleteAt = 0").
 		Where(fmt.Sprintf("q2.Type NOT LIKE '%s%%'", model.PostSystemMessagePrefix)).
 		OrderByClause("q2.CreateAt DESC").
-		Limit(100)
+		Limit(limit)
+
+	// Add offset for pagination
+	if page > 0 {
+		baseQuery = baseQuery.Offset(uint64(page) * limit)
+	}
 
 	var err error
 	baseQuery, err = s.buildSearchPostFilterClause(teamId, params.FromUsers, params.ExcludedUsers, userByUsername, baseQuery)
@@ -2812,43 +2823,24 @@ func (s *SqlPostStore) GetDirectPostParentsForExportAfter(limit int, afterId str
 
 //nolint:unparam
 func (s *SqlPostStore) SearchPostsForUser(rctx request.CTX, paramsList []*model.SearchParams, userId, teamId string, page, perPage int) (*model.PostSearchResults, error) {
-	// Since we don't support paging for DB search, we just return nothing for later pages
-	if page > 0 {
-		return model.MakePostSearchResults(model.NewPostList(), nil), nil
-	}
-
 	if err := model.IsSearchParamsListValid(paramsList); err != nil {
 		return nil, err
 	}
 
-	var wg sync.WaitGroup
-
-	pchan := make(chan store.StoreResult[*model.PostList], len(paramsList))
+	// Process all search params in a single query instead of using goroutines
+	// This aligns with Bleve's implementation and enables consistent pagination
+	posts := model.NewPostList()
 
 	for _, params := range paramsList {
 		// remove any unquoted term that contains only non-alphanumeric chars
 		// ex: abcd "**" && abc     >>     abcd "**" abc
 		params.Terms = removeNonAlphaNumericUnquotedTerms(params.Terms, " ")
 
-		wg.Add(1)
-
-		go func(params *model.SearchParams) {
-			defer wg.Done()
-			postList, err := s.search(teamId, userId, params, false, false)
-			pchan <- store.StoreResult[*model.PostList]{Data: postList, NErr: err}
-		}(params)
-	}
-
-	wg.Wait()
-	close(pchan)
-
-	posts := model.NewPostList()
-
-	for result := range pchan {
-		if result.NErr != nil {
-			return nil, result.NErr
+		postList, err := s.search(teamId, userId, params, false, false, page, perPage)
+		if err != nil {
+			return nil, err
 		}
-		posts.Extend(result.Data)
+		posts.Extend(postList)
 	}
 
 	posts.SortByCreateAt()
