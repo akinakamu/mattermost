@@ -2024,22 +2024,25 @@ func (s *SqlPostStore) buildSearchPostFilterClause(teamID string, fromUsers []st
 }
 
 func (s *SqlPostStore) Search(teamId string, userId string, params *model.SearchParams) (*model.PostList, error) {
-	return s.search(teamId, userId, params, true, true, 0, 60)
+	return s.search(teamId, userId, []*model.SearchParams{params}, true, true)
 }
 
-func (s *SqlPostStore) search(teamId string, userId string, params *model.SearchParams, channelsByName bool, userByUsername bool, page int, perPage int) (*model.PostList, error) {
+func (s *SqlPostStore) search(teamId string, userId string, paramsList []*model.SearchParams, channelsByName bool, userByUsername bool) (*model.PostList, error) {
 	list := model.NewPostList()
-	if params.Terms == "" && params.ExcludedTerms == "" &&
-		len(params.InChannels) == 0 && len(params.ExcludedChannels) == 0 &&
-		len(params.FromUsers) == 0 && len(params.ExcludedUsers) == 0 &&
-		params.OnDate == "" && params.AfterDate == "" && params.BeforeDate == "" {
-		return list, nil
-	}
 
-	// Use perPage for limit, default to 60 if not specified
-	limit := uint64(perPage)
-	if perPage <= 0 {
-		limit = 60
+	// Check if all params are empty
+	allEmpty := true
+	for _, params := range paramsList {
+		if !(params.Terms == "" && params.ExcludedTerms == "" &&
+			len(params.InChannels) == 0 && len(params.ExcludedChannels) == 0 &&
+			len(params.FromUsers) == 0 && len(params.ExcludedUsers) == 0 &&
+			params.OnDate == "" && params.AfterDate == "" && params.BeforeDate == "") {
+			allEmpty = false
+			break
+		}
+	}
+	if allEmpty {
+		return list, nil
 	}
 
 	baseQuery := s.getQueryBuilder().Select(
@@ -2049,12 +2052,10 @@ func (s *SqlPostStore) search(teamId string, userId string, params *model.Search
 		Where("q2.DeleteAt = 0").
 		Where(fmt.Sprintf("q2.Type NOT LIKE '%s%%'", model.PostSystemMessagePrefix)).
 		OrderByClause("q2.CreateAt DESC").
-		Limit(limit)
+		Limit(100)
 
-	// Add offset for pagination
-	if page > 0 {
-		baseQuery = baseQuery.Offset(uint64(page) * limit)
-	}
+	// Use the first params for common filters (channel, date, user filters are same across all params)
+	params := paramsList[0]
 
 	var err error
 	baseQuery, err = s.buildSearchPostFilterClause(teamId, params.FromUsers, params.ExcludedUsers, userByUsername, baseQuery)
@@ -2063,45 +2064,70 @@ func (s *SqlPostStore) search(teamId string, userId string, params *model.Search
 	}
 	baseQuery = s.buildCreateDateFilterClause(params, baseQuery)
 
-	termMap := map[string]bool{}
-	terms := params.Terms
-	excludedTerms := params.ExcludedTerms
+	// Collect all search terms from all params (both hashtag and message searches)
+	var allTerms []string
+	var allExcludedTerms []string
+	var allPhrases []string
+	var allExcludedPhrases []string
+	hashtagTermMap := map[string]bool{}
 
-	searchType := "Message"
-	if params.IsHashtag {
-		searchType = "Hashtags"
-		for term := range strings.SplitSeq(terms, " ") {
-			termMap[strings.ToUpper(term)] = true
+	for _, params := range paramsList {
+		terms := params.Terms
+		excludedTerms := params.ExcludedTerms
+
+		if params.IsHashtag {
+			// For hashtag searches, collect terms for later exact matching
+			for term := range strings.SplitSeq(terms, " ") {
+				hashtagTermMap[strings.ToUpper(term)] = true
+			}
 		}
-	}
 
-	for _, c := range s.specialSearchChars() {
-		if !params.IsHashtag {
-			terms = strings.Replace(terms, c, " ", -1)
+		// Sanitize special chars
+		for _, c := range s.specialSearchChars() {
+			if !params.IsHashtag {
+				terms = strings.Replace(terms, c, " ", -1)
+			}
+			excludedTerms = strings.Replace(excludedTerms, c, " ", -1)
 		}
-		excludedTerms = strings.Replace(excludedTerms, c, " ", -1)
-	}
 
-	if terms == "" && excludedTerms == "" {
-		// we've already confirmed that we have a channel or user to search for
-	} else if true {
-		// Query generation customized for Japanese by bypassing the original implementation
-		// build LIKE search query using pg_bigm index
-
-		// Escape wildcards of LIKE searches used within strings with a backslash("\").
+		// Escape wildcards
 		terms = sanitizeSearchTerm(terms, "\\")
 		excludedTerms = sanitizeSearchTerm(excludedTerms, "\\")
 
+		// Extract phrases
 		phrases := quotedStringsRegex.FindAllString(terms, -1)
 		terms = quotedStringsRegex.ReplaceAllString(terms, " ")
 		excludedPhrases := quotedStringsRegex.FindAllString(excludedTerms, -1)
 		excludedTerms = quotedStringsRegex.ReplaceAllLiteralString(excludedTerms, " ")
 
-		baseQuery = s.generateLikeSearchQueryForPosts(baseQuery, params, phrases, terms, excludedTerms, excludedPhrases, searchType)
+		if terms != "" {
+			allTerms = append(allTerms, terms)
+		}
+		if excludedTerms != "" {
+			allExcludedTerms = append(allExcludedTerms, excludedTerms)
+		}
+		allPhrases = append(allPhrases, phrases...)
+		allExcludedPhrases = append(allExcludedPhrases, excludedPhrases...)
+	}
+
+	// Build combined search query for all terms
+	combinedTerms := strings.Join(allTerms, " ")
+	combinedExcludedTerms := strings.Join(allExcludedTerms, " ")
+
+	if combinedTerms == "" && combinedExcludedTerms == "" && len(allPhrases) == 0 && len(allExcludedPhrases) == 0 {
+		// we've already confirmed that we have a channel or user to search for
+	} else if true {
+		// Query generation customized for Japanese by bypassing the original implementation
+		// build LIKE search query using pg_bigm index
+
+		// Determine search type - use "Message" for combined hashtag/message search
+		searchType := "Message"
+
+		baseQuery = s.generateLikeSearchQueryForPosts(baseQuery, params, allPhrases, combinedTerms, combinedExcludedTerms, allExcludedPhrases, searchType)
 	} else {
 		// Parse text for wildcards
-		terms = wildCardRegex.ReplaceAllLiteralString(terms, ":* ")
-		excludedTerms = wildCardRegex.ReplaceAllLiteralString(excludedTerms, ":* ")
+		combinedTerms = wildCardRegex.ReplaceAllLiteralString(combinedTerms, ":* ")
+		combinedExcludedTerms = wildCardRegex.ReplaceAllLiteralString(combinedExcludedTerms, ":* ")
 
 		simpleSearch := false
 		// Replace spaces with to_tsquery symbols
@@ -2133,8 +2159,8 @@ func (s *SqlPostStore) search(teamId string, userId string, params *model.Search
 			return input
 		}
 
-		tsQueryClause := replaceSpaces(terms, false)
-		excludedClause := replaceSpaces(excludedTerms, true)
+		tsQueryClause := replaceSpaces(combinedTerms, false)
+		excludedClause := replaceSpaces(combinedExcludedTerms, true)
 		if excludedClause != "" {
 			tsQueryClause += " &!(" + excludedClause + ")"
 		}
@@ -2144,6 +2170,7 @@ func (s *SqlPostStore) search(teamId string, userId string, params *model.Search
 			textSearchCfg = "simple"
 		}
 
+		searchType := "Message"
 		searchClause := fmt.Sprintf("to_tsvector('%[1]s', %[2]s) @@  to_tsquery('%[1]s', ?)", textSearchCfg, searchType)
 		baseQuery = baseQuery.Where(searchClause, tsQueryClause)
 	}
@@ -2183,10 +2210,11 @@ func (s *SqlPostStore) search(teamId string, userId string, params *model.Search
 		// Don't return the error to the caller as it is of no use to the user. Instead return an empty set of search results.
 	} else {
 		for _, p := range posts {
-			if searchType == "Hashtags" {
+			// Perform exact hashtag matching if we have hashtag searches
+			if len(hashtagTermMap) > 0 {
 				exactMatch := false
 				for tag := range strings.SplitSeq(p.Hashtags, " ") {
-					if termMap[strings.ToUpper(tag)] {
+					if hashtagTermMap[strings.ToUpper(tag)] {
 						exactMatch = true
 						break
 					}
@@ -2827,25 +2855,20 @@ func (s *SqlPostStore) SearchPostsForUser(rctx request.CTX, paramsList []*model.
 		return nil, err
 	}
 
-	// Process all search params in a single query instead of using goroutines
-	// This aligns with Bleve's implementation and enables consistent pagination
-	posts := model.NewPostList()
-
+	// Clean up params before passing to search
 	for _, params := range paramsList {
 		// remove any unquoted term that contains only non-alphanumeric chars
 		// ex: abcd "**" && abc     >>     abcd "**" abc
 		params.Terms = removeNonAlphaNumericUnquotedTerms(params.Terms, " ")
-
-		postList, err := s.search(teamId, userId, params, false, false, page, perPage)
-		if err != nil {
-			return nil, err
-		}
-		posts.Extend(postList)
 	}
 
-	posts.SortByCreateAt()
+	// Call search with the entire paramsList - it will handle combining all queries
+	postList, err := s.search(teamId, userId, paramsList, false, false)
+	if err != nil {
+		return nil, err
+	}
 
-	return model.MakePostSearchResults(posts, nil), nil
+	return model.MakePostSearchResults(postList, nil), nil
 }
 
 func (s *SqlPostStore) GetOldestEntityCreationTime() (int64, error) {
