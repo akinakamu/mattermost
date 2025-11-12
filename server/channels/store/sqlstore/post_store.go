@@ -2024,10 +2024,10 @@ func (s *SqlPostStore) buildSearchPostFilterClause(teamID string, fromUsers []st
 }
 
 func (s *SqlPostStore) Search(teamId string, userId string, params *model.SearchParams) (*model.PostList, error) {
-	return s.search(teamId, userId, []*model.SearchParams{params}, true, true)
+	return s.search(teamId, userId, []*model.SearchParams{params}, true, true, 0, 60)
 }
 
-func (s *SqlPostStore) search(teamId string, userId string, paramsList []*model.SearchParams, channelsByName bool, userByUsername bool) (*model.PostList, error) {
+func (s *SqlPostStore) search(teamId string, userId string, paramsList []*model.SearchParams, channelsByName bool, userByUsername bool, page int, perPage int) (*model.PostList, error) {
 	list := model.NewPostList()
 
 	// Check if all params are empty
@@ -2045,6 +2045,12 @@ func (s *SqlPostStore) search(teamId string, userId string, paramsList []*model.
 		return list, nil
 	}
 
+	// Use perPage for limit, default to 60 if not specified
+	limit := uint64(perPage)
+	if perPage <= 0 {
+		limit = 60
+	}
+
 	baseQuery := s.getQueryBuilder().Select(
 		"*",
 		"(SELECT COUNT(*) FROM Posts WHERE Posts.RootId = (CASE WHEN q2.RootId = '' THEN q2.Id ELSE q2.RootId END) AND Posts.DeleteAt = 0) as ReplyCount",
@@ -2052,7 +2058,12 @@ func (s *SqlPostStore) search(teamId string, userId string, paramsList []*model.
 		Where("q2.DeleteAt = 0").
 		Where(fmt.Sprintf("q2.Type NOT LIKE '%s%%'", model.PostSystemMessagePrefix)).
 		OrderByClause("q2.CreateAt DESC").
-		Limit(100)
+		Limit(limit)
+
+	// Add offset for pagination
+	if page > 0 {
+		baseQuery = baseQuery.Offset(uint64(page) * limit)
+	}
 
 	// Use the first params for common filters (channel, date, user filters are same across all params)
 	params := paramsList[0]
@@ -2863,7 +2874,7 @@ func (s *SqlPostStore) SearchPostsForUser(rctx request.CTX, paramsList []*model.
 	}
 
 	// Call search with the entire paramsList - it will handle combining all queries
-	postList, err := s.search(teamId, userId, paramsList, false, false)
+	postList, err := s.search(teamId, userId, paramsList, false, false, page, perPage)
 	if err != nil {
 		return nil, err
 	}
