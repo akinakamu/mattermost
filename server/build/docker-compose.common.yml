@@ -1,6 +1,9 @@
 services:
   postgres:
-    image: "postgres:13"
+    # image: "postgres:13"
+    build:
+      context: ./
+      dockerfile: Dockerfile.postgres-pgbigm
     restart: always
     networks:
       - mm-test
