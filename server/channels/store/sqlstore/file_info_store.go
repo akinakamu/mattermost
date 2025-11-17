@@ -531,13 +531,13 @@ func (fs SqlFileInfoStore) PermanentDeleteByUser(rctx request.CTX, userId string
 }
 
 func (fs SqlFileInfoStore) Search(rctx request.CTX, paramsList []*model.SearchParams, userId, teamId string, page, perPage int) (*model.FileInfoList, error) {
-	// Since we don't support paging for DB search, we just return nothing for later pages
-	if page > 0 {
-		return model.NewFileInfoList(), nil
-	}
 	if err := model.IsSearchParamsListValid(paramsList); err != nil {
 		return nil, err
 	}
+	
+	// Implement pagination like BleveEngine: LIMIT perPage OFFSET page*perPage
+	offset := page * perPage
+	
 	query := fs.getQueryBuilder().
 		Select(fs.queryFields...).
 		From("FileInfo").
@@ -549,7 +549,8 @@ func (fs SqlFileInfoStore) Search(rctx request.CTX, paramsList []*model.SearchPa
 			sq.NotEq{"FileInfo.PostId": ""},
 		}).
 		OrderBy("FileInfo.CreateAt DESC").
-		Limit(100)
+		Limit(uint64(perPage)).
+		Offset(uint64(offset))
 
 	if teamId != "" {
 		query = query.Where(sq.Or{sq.Eq{"C.TeamId": teamId}, sq.Eq{"C.TeamId": ""}})
