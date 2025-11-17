@@ -636,22 +636,43 @@ func (fs SqlFileInfoStore) Search(rctx request.CTX, paramsList []*model.SearchPa
 			var conditions sq.And
 			
 			if terms != "" {
-				likeTerm := sanitizeFileInfoSearchTerm(terms)
-				if likeTerm != "" {
-					conditions = append(conditions, sq.Or{
-						sq.Expr("LOWER(FileInfo.Name) LIKE LOWER(?) ESCAPE '*'", likeTerm),
-						sq.Expr("LOWER(FileInfo.Content) LIKE LOWER(?) ESCAPE '*'", likeTerm),
-					})
+				// Split terms by whitespace and process each word separately
+				termWords := strings.Fields(terms)
+				var termQueries []sq.Sqlizer
+				
+				for _, term := range termWords {
+					likeTerm := sanitizeFileInfoSearchTerm(term)
+					if likeTerm != "" {
+						termQueries = append(termQueries, sq.Or{
+							sq.Expr("LOWER(FileInfo.Name) LIKE LOWER(?) ESCAPE '*'", likeTerm),
+							sq.Expr("LOWER(FileInfo.Content) LIKE LOWER(?) ESCAPE '*'", likeTerm),
+						})
+					}
+				}
+				
+				if len(termQueries) > 0 {
+					if params.OrTerms {
+						// OR: any term matches
+						conditions = append(conditions, sq.Or(termQueries))
+					} else {
+						// AND: all terms must match
+						conditions = append(conditions, sq.And(termQueries))
+					}
 				}
 			}
 			
 			if excludedTerms != "" {
-				excludeLikeTerm := sanitizeFileInfoSearchTerm(excludedTerms)
-				if excludeLikeTerm != "" {
-					conditions = append(conditions, sq.Expr("NOT (?)", sq.Or{
-						sq.Expr("LOWER(FileInfo.Name) LIKE LOWER(?) ESCAPE '*'", excludeLikeTerm),
-						sq.Expr("LOWER(FileInfo.Content) LIKE LOWER(?) ESCAPE '*'", excludeLikeTerm),
-					}))
+				// Split excluded terms by whitespace
+				excludedWords := strings.Fields(excludedTerms)
+				
+				for _, term := range excludedWords {
+					excludeLikeTerm := sanitizeFileInfoSearchTerm(term)
+					if excludeLikeTerm != "" {
+						conditions = append(conditions, sq.Expr("NOT (?)", sq.Or{
+							sq.Expr("LOWER(FileInfo.Name) LIKE LOWER(?) ESCAPE '*'", excludeLikeTerm),
+							sq.Expr("LOWER(FileInfo.Content) LIKE LOWER(?) ESCAPE '*'", excludeLikeTerm),
+						}))
+					}
 				}
 			}
 			
