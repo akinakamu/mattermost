@@ -664,15 +664,21 @@ func (fs SqlFileInfoStore) Search(rctx request.CTX, paramsList []*model.SearchPa
 			if excludedTerms != "" {
 				// Split excluded terms by whitespace
 				excludedWords := strings.Fields(excludedTerms)
+				var excludedQueries []sq.Sqlizer
 				
 				for _, term := range excludedWords {
 					excludeLikeTerm := sanitizeFileInfoSearchTerm(term)
 					if excludeLikeTerm != "" {
-						conditions = append(conditions, sq.Expr("NOT (?)", sq.Or{
+						excludedQueries = append(excludedQueries, sq.Or{
 							sq.Expr("LOWER(FileInfo.Name) LIKE LOWER(?) ESCAPE '*'", excludeLikeTerm),
 							sq.Expr("LOWER(FileInfo.Content) LIKE LOWER(?) ESCAPE '*'", excludeLikeTerm),
-						}))
+						})
 					}
+				}
+				
+				if len(excludedQueries) > 0 {
+					// Exclude if ANY of the excluded terms match (OR them together, then negate)
+					conditions = append(conditions, sq.Expr("NOT (?)", sq.Or(excludedQueries)))
 				}
 			}
 			
