@@ -657,8 +657,8 @@ func (fs SqlFileInfoStore) Search(rctx request.CTX, paramsList []*model.SearchPa
 			termWords := strings.Fields(terms)
 			for _, term := range termWords {
 				termQuery = append(termQuery, sq.Or{
-					sq.Expr("LOWER(FileInfo.Name) LIKE LOWER(?) ESCAPE '\\'", term),
-					sq.Expr("LOWER(FileInfo.Content) LIKE LOWER(?) ESCAPE '\\'", term),
+					sq.Expr("LOWER(FileInfo.Name) LIKE LOWER(?) ESCAPE '\\'", "%"+term+"%"),
+					sq.Expr("LOWER(FileInfo.Content) LIKE LOWER(?) ESCAPE '\\'", "%"+term+"%"),
 				})
 			}
 
@@ -673,8 +673,8 @@ func (fs SqlFileInfoStore) Search(rctx request.CTX, paramsList []*model.SearchPa
 			excludedTerms := strings.Fields(excludedTerms)
 			for _, term := range excludedTerms {
 				likeConditions = append(likeConditions, sq.Expr("NOT (?)", sq.Or{
-					sq.Expr("LOWER(FileInfo.Name) LIKE LOWER(?) ESCAPE '\\'", term),
-					sq.Expr("LOWER(FileInfo.Name) LIKE LOWER(?) ESCAPE '\\'", term),
+					sq.Expr("LOWER(FileInfo.Name) LIKE LOWER(?) ESCAPE '\\'", "%"+term+"%"),
+					sq.Expr("LOWER(FileInfo.Content) LIKE LOWER(?) ESCAPE '\\'", "%"+term+"%"),
 				}))
 			}
 
