@@ -531,13 +531,13 @@ func (fs SqlFileInfoStore) PermanentDeleteByUser(rctx request.CTX, userId string
 }
 
 func (fs SqlFileInfoStore) Search(rctx request.CTX, paramsList []*model.SearchParams, userId, teamId string, page, perPage int) (*model.FileInfoList, error) {
-	// Since we don't support paging for DB search, we just return nothing for later pages
-	if page > 0 {
-		return model.NewFileInfoList(), nil
-	}
 	if err := model.IsSearchParamsListValid(paramsList); err != nil {
 		return nil, err
 	}
+	
+	// Implement pagination like BleveEngine: LIMIT perPage OFFSET page*perPage
+	offset := page * perPage
+	
 	query := fs.getQueryBuilder().
 		Select(fs.queryFields...).
 		From("FileInfo").
@@ -549,7 +549,8 @@ func (fs SqlFileInfoStore) Search(rctx request.CTX, paramsList []*model.SearchPa
 			sq.NotEq{"FileInfo.PostId": ""},
 		}).
 		OrderBy("FileInfo.CreateAt DESC").
-		Limit(100)
+		Limit(uint64(perPage)).
+		Offset(uint64(offset))
 
 	if teamId != "" {
 		query = query.Where(sq.Or{sq.Eq{"C.TeamId": teamId}, sq.Eq{"C.TeamId": ""}})
@@ -632,16 +633,59 @@ func (fs SqlFileInfoStore) Search(rctx request.CTX, paramsList []*model.SearchPa
 		if terms == "" && excludedTerms == "" {
 			// we've already confirmed that we have a channel or user to search for
 		} else if fs.DriverName() == model.DatabaseDriverPostgres {
-			// Perse text for LIKE wildcards
-			if wildcard, err := regexp.Compile(`\*($| )`); err == nil {
-				terms = wildcard.ReplaceAllLiteralString(terms, "%")
-				excludedTerms = wildcard.ReplaceAllLiteralString(excludedTerms, "%")
+			// Use LIKE search with pg_bigm indexes for FileInfo.Name and FileInfo.Content
+			var conditions sq.And
+			
+			if terms != "" {
+				// Split terms by whitespace and process each word separately
+				termWords := strings.Fields(terms)
+				var termQueries []sq.Sqlizer
+				
+				for _, term := range termWords {
+					likeTerm := sanitizeFileInfoSearchTerm(term)
+					if likeTerm != "" {
+						termQueries = append(termQueries, sq.Or{
+							sq.Expr("LOWER(FileInfo.Name) LIKE LOWER(?) ESCAPE '*'", likeTerm),
+							sq.Expr("LOWER(FileInfo.Content) LIKE LOWER(?) ESCAPE '*'", likeTerm),
+						})
+					}
+				}
+				
+				if len(termQueries) > 0 {
+					if params.OrTerms {
+						// OR: any term matches
+						conditions = append(conditions, sq.Or(termQueries))
+					} else {
+						// AND: all terms must match
+						conditions = append(conditions, sq.And(termQueries))
+					}
+				}
 			}
-
-			query = query.Where(sqOr{
-				sq.Expr(),
-				sq.Expr(),
-			})
+			
+			if excludedTerms != "" {
+				// Split excluded terms by whitespace
+				excludedWords := strings.Fields(excludedTerms)
+				var excludedQueries []sq.Sqlizer
+				
+				for _, term := range excludedWords {
+					excludeLikeTerm := sanitizeFileInfoSearchTerm(term)
+					if excludeLikeTerm != "" {
+						excludedQueries = append(excludedQueries, sq.Or{
+							sq.Expr("LOWER(FileInfo.Name) LIKE LOWER(?) ESCAPE '*'", excludeLikeTerm),
+							sq.Expr("LOWER(FileInfo.Content) LIKE LOWER(?) ESCAPE '*'", excludeLikeTerm),
+						})
+					}
+				}
+				
+				if len(excludedQueries) > 0 {
+					// Exclude if ANY of the excluded terms match (OR them together, then negate)
+					conditions = append(conditions, sq.Expr("NOT (?)", sq.Or(excludedQueries)))
+				}
+			}
+			
+			if len(conditions) > 0 {
+				query = query.Where(conditions)
+			}
 		} else {
 			// Parse text for wildcards
 			if wildcard, err := regexp.Compile(`\*($| )`); err == nil {
