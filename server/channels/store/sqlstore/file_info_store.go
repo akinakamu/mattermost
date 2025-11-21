@@ -551,10 +551,8 @@ func (fs SqlFileInfoStore) Search(rctx request.CTX, paramsList []*model.SearchPa
 		channelQuery = channelQuery.Where(sq.Or{sq.Eq{"Channels.TeamId": teamId}, sq.Eq{"Channels.TeamId": ""}})
 	}
 
-	// Use the first params for common channel filters
-	if len(paramsList) > 0 {
-		params := paramsList[0]
-
+	// Apply channel filters from all params objects
+	for _, params := range paramsList {
 		if !params.IncludeDeletedChannels {
 			channelQuery = channelQuery.Where(sq.Eq{"Channels.DeleteAt": 0})
 		}
