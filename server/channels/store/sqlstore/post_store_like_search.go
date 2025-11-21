@@ -163,10 +163,8 @@ func (s *SqlPostStore) generateLikeSearchQueryForPosts(baseQuery sq.SelectBuilde
 	return baseQuery
 }
 
-/**
- * fetchChannelIdsForSearch retrieves channel IDs that match the search criteria.
- * This is called separately before the main post search to avoid using a subquery.
- */
+// fetchChannelIdsForSearch retrieves channel IDs that match the search criteria.
+// This is called separately before the main post search to avoid using a subquery.
 func (s *SqlPostStore) fetchChannelIdsForSearch(teamId string, userId string, params *model.SearchParams, channelsByName bool) ([]string, error) {
 	query := s.getQueryBuilder().Select("Channels.Id").
 		From("Channels, ChannelMembers").
