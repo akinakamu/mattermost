@@ -2796,11 +2796,36 @@ func (s *SqlPostStore) GetDirectPostParentsForExportAfter(limit int, afterId str
 	return result, nil
 }
 
+func (s *SqlPostStore) likeSearchPostsForUser(rctx request.CTX, paramsList []*model.SearchParams, userId, teamId string, page, perPage int) (*model.PostSearchResults, error) {
+	if err := model.IsSearchParamsListValid(paramsList); err != nil {
+		return nil, err
+	}
+
+	for _, params := range paramsList {
+		// remove any unquoted term that contains only non-alphanumeric chars
+		// ex: abcd "**" && abc     >>     abcd "**" abc
+		params.Terms = removeNonAlphaNumericUnquotedTerms(params.Terms, " ")
+	}
+
+	postList, err := s.likesearch(teamId, userId, paramsList, false, false, page, perPage)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return model.MakePostSearchResults(postList, nil), nil
+}
+
 //nolint:unparam
 func (s *SqlPostStore) SearchPostsForUser(rctx request.CTX, paramsList []*model.SearchParams, userId, teamId string, page, perPage int) (*model.PostSearchResults, error) {
 	// Since we don't support paging for DB search, we just return nothing for later pages
 	if page > 0 {
+	} else if false {
 		return model.MakePostSearchResults(model.NewPostList(), nil), nil
+	}
+
+	if true {
+		return s.likeSearchPostsForUser(rctx, paramsList, userId, teamId, page, perPage)
 	}
 
 	if err := model.IsSearchParamsListValid(paramsList); err != nil {
