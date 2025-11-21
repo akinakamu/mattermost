@@ -540,16 +540,66 @@ func (fs SqlFileInfoStore) Search(rctx request.CTX, paramsList []*model.SearchPa
 		limit = 60
 	}
 
+	// Fetch channel IDs separately first, then use them directly in the main query
+	// Build query to fetch channel IDs that match the search criteria
+	channelQuery := fs.getQueryBuilder().
+		Select("DISTINCT Channels.Id").
+		From("Channels").
+		LeftJoin("ChannelMembers ON Channels.Id = ChannelMembers.ChannelId")
+
+	if teamId != "" {
+		channelQuery = channelQuery.Where(sq.Or{sq.Eq{"Channels.TeamId": teamId}, sq.Eq{"Channels.TeamId": ""}})
+	}
+
+	// Use the first params for common channel filters
+	if len(paramsList) > 0 {
+		params := paramsList[0]
+
+		if !params.IncludeDeletedChannels {
+			channelQuery = channelQuery.Where(sq.Eq{"Channels.DeleteAt": 0})
+		}
+
+		if !params.SearchWithoutUserId {
+			channelQuery = channelQuery.Where(sq.Eq{"ChannelMembers.UserId": userId})
+		}
+
+		if len(params.InChannels) != 0 {
+			channelQuery = channelQuery.Where(sq.Eq{"Channels.Id": params.InChannels})
+		}
+
+		if len(params.ExcludedChannels) != 0 {
+			channelQuery = channelQuery.Where(sq.NotEq{"Channels.Id": params.ExcludedChannels})
+		}
+	}
+
+	// Execute the channel ID query
+	channelQueryStr, channelQueryArgs, err := channelQuery.ToSql()
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to build channel query")
+	}
+
+	var channelIds []string
+	if err := fs.GetSearchReplicaX().Select(&channelIds, channelQueryStr, channelQueryArgs...); err != nil {
+		return nil, errors.Wrap(err, "failed to fetch channel IDs")
+	}
+
+	// If no channels are found, return empty list early
+	if len(channelIds) == 0 {
+		list := model.NewFileInfoList()
+		list.MakeNonNil()
+		return list, nil
+	}
+
+	// Build main query using the fetched channel IDs
 	query := fs.getQueryBuilder().
 		Select(fs.queryFields...).
 		From("FileInfo").
-		LeftJoin("Channels as C ON C.Id=FileInfo.ChannelId").
-		LeftJoin("ChannelMembers as CM ON C.Id=CM.ChannelId").
 		Where(sq.Eq{"FileInfo.DeleteAt": 0}).
 		Where(sq.Or{
 			sq.Eq{"FileInfo.CreatorId": model.BookmarkFileOwner},
 			sq.NotEq{"FileInfo.PostId": ""},
 		}).
+		Where(sq.Eq{"FileInfo.ChannelId": channelIds}).
 		OrderBy("FileInfo.CreateAt DESC").
 		Limit(limit)
 
@@ -557,24 +607,8 @@ func (fs SqlFileInfoStore) Search(rctx request.CTX, paramsList []*model.SearchPa
 		query = query.Offset(uint64(page) * limit)
 	}
 
-	if teamId != "" {
-		query = query.Where(sq.Or{sq.Eq{"C.TeamId": teamId}, sq.Eq{"C.TeamId": ""}})
-	}
-
 	for _, params := range paramsList {
 		params.Terms = removeNonAlphaNumericUnquotedTerms(params.Terms, " ")
-
-		if !params.IncludeDeletedChannels {
-			query = query.Where(sq.Eq{"C.DeleteAt": 0})
-		}
-
-		if !params.SearchWithoutUserId {
-			query = query.Where(sq.Eq{"CM.UserId": userId})
-		}
-
-		if len(params.InChannels) != 0 {
-			query = query.Where(sq.Eq{"C.Id": params.InChannels})
-		}
 
 		if len(params.Extensions) != 0 {
 			query = query.Where(sq.Eq{"FileInfo.Extension": params.Extensions})
@@ -584,9 +618,7 @@ func (fs SqlFileInfoStore) Search(rctx request.CTX, paramsList []*model.SearchPa
 			query = query.Where(sq.NotEq{"FileInfo.Extension": params.ExcludedExtensions})
 		}
 
-		if len(params.ExcludedChannels) != 0 {
-			query = query.Where(sq.NotEq{"C.Id": params.ExcludedChannels})
-		}
+		// Note: InChannels and ExcludedChannels are already handled in the channel ID fetch above
 
 		if len(params.FromUsers) != 0 {
 			query = query.Where(sq.Eq{"FileInfo.CreatorId": params.FromUsers})
