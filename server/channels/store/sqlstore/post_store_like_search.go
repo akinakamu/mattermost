@@ -164,6 +164,40 @@ func (s *SqlPostStore) generateLikeSearchQueryForPosts(baseQuery sq.SelectBuilde
 }
 
 /**
+ * fetchChannelIdsForSearch retrieves channel IDs that match the search criteria.
+ * This is called separately before the main post search to avoid using a subquery.
+ */
+func (s *SqlPostStore) fetchChannelIdsForSearch(teamId string, userId string, params *model.SearchParams, channelsByName bool) ([]string, error) {
+	query := s.getQueryBuilder().Select("Channels.Id").
+		From("Channels, ChannelMembers").
+		Where("Channels.Id = ChannelMembers.ChannelId")
+
+	if !params.IncludeDeletedChannels {
+		query = query.Where("Channels.DeleteAt = 0")
+	}
+
+	if !params.SearchWithoutUserId {
+		query = query.Where("ChannelMembers.UserId = ?", userId)
+	}
+
+	query = s.buildSearchTeamFilterClause(teamId, query)
+	query = s.buildSearchChannelFilterClause(params.InChannels, false, channelsByName, query)
+	query = s.buildSearchChannelFilterClause(params.ExcludedChannels, true, channelsByName, query)
+
+	queryStr, queryArgs, err := query.ToSql()
+	if err != nil {
+		return nil, err
+	}
+
+	var channelIds []string
+	if err := s.GetSearchReplicaX().Select(&channelIds, queryStr, queryArgs...); err != nil {
+		return nil, err
+	}
+
+	return channelIds, nil
+}
+
+/**
  * This function is an alternative to `search()` for replacing queries with like searches.
  * Additionally, to support pagination, it has been modified to accepts params as a list and adds page and perpage arguments.
  */
@@ -257,28 +291,20 @@ func (s *SqlPostStore) likesearch(teamId string, userId string, paramsList []*mo
 		baseQuery = s.generateLikeSearchQueryForPosts(baseQuery, params, phrases, excludedPhrases, hashtagTerms, terms, excludedTerms)
 	}
 
-	inQuery := s.getSubQueryBuilder().Select("Id").
-		From("Channels, ChannelMembers").
-		Where("Id = ChannelId")
-
-	if !params.IncludeDeletedChannels {
-		inQuery = inQuery.Where("Channels.DeleteAt = 0")
-	}
-
-	if !params.SearchWithoutUserId {
-		inQuery = inQuery.Where("ChannelMembers.UserId = ?", userId)
-	}
-
-	inQuery = s.buildSearchTeamFilterClause(teamId, inQuery)
-	inQuery = s.buildSearchChannelFilterClause(params.InChannels, false, channelsByName, inQuery)
-	inQuery = s.buildSearchChannelFilterClause(params.ExcludedChannels, true, channelsByName, inQuery)
-
-	inQueryClause, inQueryClauseArgs, err := inQuery.ToSql()
+	// Fetch channel IDs separately first, then use them directly in the main query
+	channelIds, err := s.fetchChannelIdsForSearch(teamId, userId, params, channelsByName)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "failed to fetch channel IDs for search")
 	}
 
-	baseQuery = baseQuery.Where(fmt.Sprintf("ChannelId IN (%s)", inQueryClause), inQueryClauseArgs...)
+	// If no channels are found, return empty list early
+	if len(channelIds) == 0 {
+		list.MakeNonNil()
+		return list, nil
+	}
+
+	// Use the fetched channel IDs directly in the base query
+	baseQuery = baseQuery.Where(sq.Eq{"ChannelId": channelIds})
 
 	searchQuery, searchQueryArgs, err := baseQuery.ToSql()
 	if err != nil {

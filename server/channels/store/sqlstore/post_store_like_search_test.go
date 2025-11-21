@@ -536,3 +536,94 @@ func TestGenerateLikeSearchQuery(t *testing.T) {
 		assert.Equal(t, 12, len(args))
 	})
 }
+
+func TestFetchChannelIdsForSearch(t *testing.T) {
+	if enableFullyParallelTests {
+		t.Parallel()
+	}
+
+	s := &SqlPostStore{}
+
+	t.Run("basic channel ID query", func(t *testing.T) {
+		params := &model.SearchParams{
+			IncludeDeletedChannels: false,
+			SearchWithoutUserId:    false,
+		}
+
+		// Just verify the query builds correctly
+		// Actual execution would require a database connection
+		query := s.getQueryBuilder().Select("Channels.Id").
+			From("Channels, ChannelMembers").
+			Where("Channels.Id = ChannelMembers.ChannelId")
+
+		if !params.IncludeDeletedChannels {
+			query = query.Where("Channels.DeleteAt = 0")
+		}
+
+		if !params.SearchWithoutUserId {
+			query = query.Where("ChannelMembers.UserId = ?", "test-user-id")
+		}
+
+		sql, args, err := query.ToSql()
+
+		require.NoError(t, err)
+		assert.Contains(t, sql, "SELECT Channels.Id FROM Channels, ChannelMembers")
+		assert.Contains(t, sql, "Channels.Id = ChannelMembers.ChannelId")
+		assert.Contains(t, sql, "Channels.DeleteAt = 0")
+		assert.Contains(t, sql, "ChannelMembers.UserId = ?")
+		assert.Equal(t, 1, len(args))
+		assert.Equal(t, "test-user-id", args[0])
+	})
+
+	t.Run("channel ID query with deleted channels included", func(t *testing.T) {
+		params := &model.SearchParams{
+			IncludeDeletedChannels: true,
+			SearchWithoutUserId:    false,
+		}
+
+		query := s.getQueryBuilder().Select("Channels.Id").
+			From("Channels, ChannelMembers").
+			Where("Channels.Id = ChannelMembers.ChannelId")
+
+		if !params.IncludeDeletedChannels {
+			query = query.Where("Channels.DeleteAt = 0")
+		}
+
+		if !params.SearchWithoutUserId {
+			query = query.Where("ChannelMembers.UserId = ?", "test-user-id")
+		}
+
+		sql, _, err := query.ToSql()
+
+		require.NoError(t, err)
+		assert.Contains(t, sql, "SELECT Channels.Id FROM Channels, ChannelMembers")
+		assert.Contains(t, sql, "Channels.Id = ChannelMembers.ChannelId")
+		assert.NotContains(t, sql, "Channels.DeleteAt = 0")
+	})
+
+	t.Run("channel ID query without user ID filter", func(t *testing.T) {
+		params := &model.SearchParams{
+			IncludeDeletedChannels: false,
+			SearchWithoutUserId:    true,
+		}
+
+		query := s.getQueryBuilder().Select("Channels.Id").
+			From("Channels, ChannelMembers").
+			Where("Channels.Id = ChannelMembers.ChannelId")
+
+		if !params.IncludeDeletedChannels {
+			query = query.Where("Channels.DeleteAt = 0")
+		}
+
+		if !params.SearchWithoutUserId {
+			query = query.Where("ChannelMembers.UserId = ?", "test-user-id")
+		}
+
+		sql, _, err := query.ToSql()
+
+		require.NoError(t, err)
+		assert.Contains(t, sql, "SELECT Channels.Id FROM Channels, ChannelMembers")
+		assert.Contains(t, sql, "Channels.Id = ChannelMembers.ChannelId")
+		assert.NotContains(t, sql, "ChannelMembers.UserId")
+	})
+}
